@@ -84,8 +84,8 @@
         </div>
 
         <div class="version-info">
-            <div class="version-text">ver 1.0.1</div>
-            <div class="update-text">Last Updated: 2026.02.24</div>
+            <div class="version-text">ver 1.0.2</div>
+            <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
 
@@ -529,9 +529,17 @@
                             else remainOsa = 0; 
                         }
                         
-                        // 🌟 인플레이션 버그 해결: 현재 재고가 0이면 과거(월,화)도 0% 결품으로 계산!
-                        let pastOsa = (originalStock > 0) ? 1 : 0;
-                        
+                        // ✅ [v1.0.2 Fix] pastOsa: 이진법(0/1) → 현재재고 vs 과거기간 소비예상량 비례 계산
+                        //    이진법 사용 시, 재고 1개만 있어도 과거 전체 기간 100% 처리 → WK 인플레이션 발생
+                        let pastSalesEstimate = avgSales * (elapsedDays / 7);
+                        let pastOsa;
+                        if (pastSalesEstimate <= 0) {
+                            pastOsa = originalStock > 0 ? 1 : 0;
+                        } else {
+                            // 현재 재고를 과거 기간 예상 소비량과 비교하여 비례 계산
+                            pastOsa = Math.min(1, Math.max(0, originalStock / pastSalesEstimate));
+                        }
+
                         osa = ((elapsedDays * pastOsa) + (remainDays * remainOsa)) / 7;
                     } 
                     else {
