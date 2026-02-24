@@ -9,10 +9,8 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
         .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; z-index: 10; }
-        
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; cursor: pointer; transition: opacity 0.2s; }
         .sidebar h2:hover { opacity: 0.8; }
-        
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
         .sidebar select, .sidebar input, .sidebar button { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; box-sizing: border-box; }
         .sidebar button { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
@@ -20,10 +18,6 @@
         
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
-        
-        .upload-section { margin-top: 30px; padding-top: 15px; border-top: 1px dashed #668cff; }
-        .upload-section input[type="file"] { background-color: transparent; color: white; padding: 0; font-size: 12px; margin-top: 10px; }
-        #fileStatus { font-size: 12px; color: #a3c2ff; margin-top: 5px; line-height: 1.4; }
         
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
@@ -80,7 +74,7 @@
 
     <div class="main-content">
         <div class="header-title" id="mainTitle">Store Overview</div>
-        <div class="header-desc" id="subTitle">하단 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다. (점선 및 노란색 표시는 미래 예측값입니다.)</div>
+        <div class="header-desc" id="subTitle">하단 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다. (점선 및 노란색 표시는 물류 CAPA 기반 예측값입니다.)</div>
         
         <div id="loading">
             <div class="spinner"></div>
@@ -105,16 +99,15 @@
     </div>
 
     <script>
-        let excelData = { AL010: [], Table7: [] }; 
+        let excelData = { AL010: [], Table7: [], SHP: [] }; 
         let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
+        let csmToSimulatedWeek = {}; // 🌟 컨테이너 CAPA 시뮬레이션 결과 저장소
 
         function normArt(val) {
             if (val === undefined || val === null) return "";
             let str = String(val).trim();
-            if (/^\d+$/.test(str)) {
-                return parseInt(str, 10).toString();
-            }
+            if (/^\d+$/.test(str)) return parseInt(str, 10).toString();
             return str;
         }
 
@@ -125,12 +118,9 @@
                         let strVal = String(row[col]).replace(/[^0-9.-]/g, '');
                         let v = parseFloat(strVal);
                         if (!isNaN(v)) {
-                            if (v > 10) { 
-                                while (v > 1.01) v = v / 100;
-                            }
+                            if (v > 10) { while (v > 1.01) v = v / 100; }
                             if (v > 1) v = 1;
                             if (v < 0) v = 0;
-                            
                             row[col] = v;
                         } else {
                             row[col] = 0;
@@ -142,6 +132,7 @@
         }
 
         function getYearWeek(dateObj, addDays = 0) {
+            if(!dateObj || isNaN(dateObj.getTime())) return null;
             let d = new Date(dateObj.getTime());
             d.setDate(d.getDate() + addDays);
             d.setHours(0, 0, 0, 0);
@@ -164,19 +155,21 @@
 
         async function loadExcelFiles() {
             try {
+                // 1. FY26 OSA.xlsx
                 const res1 = await fetch('./FY26 OSA.xlsx');
                 if (!res1.ok) throw new Error("'FY26 OSA.xlsx' 파일을 찾을 수 없습니다.");
                 const ab1 = await res1.arrayBuffer();
                 const wb1 = XLSX.read(ab1, { type: 'array', cellDates: true });
 
+                // 2. Order.xlsx
                 const res2 = await fetch('./Order.xlsx');
                 if (!res2.ok) throw new Error("'Order.xlsx' 파일을 찾을 수 없습니다. (매주 이름을 'Order.xlsx'로 변경해서 올려주세요)");
                 const ab2 = await res2.arrayBuffer();
                 const wb2 = XLSX.read(ab2, { type: 'array', cellDates: true });
 
-                const getSheetData = (wb, name) => {
+                const getSheetData = (wb, name, useRaw = true) => {
                     const sheet = wb.Sheets[name];
-                    return sheet ? XLSX.utils.sheet_to_json(sheet, { raw: true, defval: "" }).map(row => {
+                    return sheet ? XLSX.utils.sheet_to_json(sheet, { raw: useRaw, defval: "" }).map(row => {
                         let newRow = {};
                         for (let key in row) newRow[key.trim()] = row[key];
                         return newRow;
@@ -190,12 +183,21 @@
                 excelData.AL010 = getSheetData(wb2, 'AL010');
                 excelData.Table7 = getSheetData(wb2, 'Table_7_Final');
 
+                // 🌟 4번째 시트(SHP) 동적 로드 (A,B,C 열 이름 대신 인덱스로 읽기 위해 header: "A" 사용)
+                let shpSheetName = wb2.SheetNames[3]; 
+                if(!shpSheetName) throw new Error("Order 파일에 4번째 시트(SHP)가 없습니다.");
+                let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
+                
+                // 첫 행(헤더) 제외
+                excelData.SHP = rawShpData.slice(1); 
+
                 if(excelData.AL010.length === 0 || excelData.Table7.length === 0) {
                      throw new Error("'Order.xlsx' 파일 내에 'AL010' 또는 'Table_7_Final' 시트가 없습니다.");
                 }
                 
                 setTimeout(() => {
-                    calculateProjections();
+                    runContainerSimulation(); // 🌟 물류 CAPA 시뮬레이션 먼저 실행
+                    calculateProjections();   // 그 결과를 바탕으로 OSA 계산
                     initFilters();
                     
                     document.getElementById('loading').style.display = 'none';
@@ -208,6 +210,116 @@
             }
         }
 
+        // --- 🌟 핵심: 컨테이너 하역 CAPA 시뮬레이터 ---
+        function runContainerSimulation() {
+            csmToSimulatedWeek = {};
+            let containers = {}; // 컨테이너 번호 기준 그룹화
+            
+            // 1. SHP 시트 데이터 추출 및 컨테이너 그룹화
+            excelData.SHP.forEach(row => {
+                let storeCode = String(row['L'] || '').trim(); // Cnee Code (373)
+                if(!storeCode.includes("373")) return;
+
+                let type = String(row['A'] || '').trim().toUpperCase(); // LF, DD, HF
+                let cntrNo = String(row['D'] || '').trim(); // 컨테이너 번호
+                let csmId = String(row['F'] || '').trim(); // CSM ID
+                let actualArrDate = parseExcelDate(row['AJ']); // 포트 도착일
+                let plannedArrDate = parseExcelDate(row['S']); // 임시: 예상 포트 도착 (열이 S라고 가정, 없으면 오늘로 퉁침)
+                let storeRecvDate = parseExcelDate(row['AT']); // 확정된 매장 입고일
+
+                if(!cntrNo || !csmId) return;
+
+                if(!containers[cntrNo]) {
+                    containers[cntrNo] = {
+                        type: type,
+                        csmList: [],
+                        fixedDate: null,
+                        arrivalDate: actualArrDate || plannedArrDate || new Date() // 도착일 기준
+                    };
+                }
+                
+                if(!containers[cntrNo].csmList.includes(csmId)) {
+                    containers[cntrNo].csmList.push(csmId);
+                }
+                
+                // 만약 하나라도 확정일이 있다면 컨테이너 전체를 확정으로 처리
+                if(storeRecvDate) {
+                    containers[cntrNo].fixedDate = storeRecvDate;
+                }
+            });
+
+            let queuedContainers = [];
+            
+            // 2. 확정건 매핑 & 대기열(Queue) 생성
+            for(let cntr in containers) {
+                let c = containers[cntr];
+                if(c.fixedDate) {
+                    let fw = getYearWeek(c.fixedDate);
+                    c.csmList.forEach(csm => csmToSimulatedWeek[csm] = fw);
+                } else {
+                    queuedContainers.push(c);
+                }
+            }
+
+            // 3. 큐 정렬: 포트 도착일 기준 FIFO
+            queuedContainers.sort((a, b) => a.arrivalDate - b.arrivalDate);
+
+            // 4. 일일 하역 스케줄링 시뮬레이션
+            let simDate = new Date(); // 오늘부터 스케줄링 시작
+            simDate.setHours(0,0,0,0);
+            
+            let qIndex = 0;
+            // 큐에 남은게 있고 너무 먼 미래(90일)가 아니면 계속
+            while(qIndex < queuedContainers.length && simDate.getTime() < Date.now() + 90*86400000) {
+                
+                let dailyLF = 0, dailyDD = 0, dailyHF = 0;
+                let pushedToday = 0;
+
+                // 하루 CAPA를 채울 때까지 큐 순회
+                for(let i = qIndex; i < queuedContainers.length; i++) {
+                    let c = queuedContainers[i];
+                    if(c.scheduled) continue; // 이미 배정됨
+
+                    let canSchedule = false;
+
+                    if(c.type === 'LF') {
+                        if(dailyLF < 1) { canSchedule = true; dailyLF++; }
+                    } 
+                    else if(c.type === 'DD') {
+                        // 기본 3대. 만약 HF가 0대면 4대까지 가능
+                        let maxDD = (dailyHF === 0) ? 4 : 3;
+                        if(dailyDD < maxDD) { canSchedule = true; dailyDD++; }
+                    } 
+                    else if(c.type === 'HF') {
+                        // 기본 1대. 만약 DD가 0대면 2대까지 가능
+                        let maxHF = (dailyDD === 0) ? 2 : 1;
+                        if(dailyHF < maxHF) { canSchedule = true; dailyHF++; }
+                    }
+                    else {
+                        // 분류 안된 것은 남는 여유 공간에 임의 배정
+                        canSchedule = true; 
+                    }
+
+                    if(canSchedule) {
+                        c.scheduled = true;
+                        let simWeek = getYearWeek(simDate);
+                        c.csmList.forEach(csm => csmToSimulatedWeek[csm] = simWeek);
+                        pushedToday++;
+                    }
+                }
+
+                // 다음 날로 이동
+                simDate.setDate(simDate.getDate() + 1);
+                
+                // 큐의 인덱스 업데이트 (맨 앞에서부터 처리된 것 패스)
+                while(qIndex < queuedContainers.length && queuedContainers[qIndex].scheduled) {
+                    qIndex++;
+                }
+            }
+            console.log("🚚 컨테이너 시뮬레이션 완료. 처리된 CSM 수:", Object.keys(csmToSimulatedWeek).length);
+        }
+
+        // --- 🌟 기존 Projection 로직에 시뮬레이터 결과 반영 ---
         function calculateProjections() {
             projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
 
@@ -225,17 +337,23 @@
             let incoming = {};
             excelData.Table7.forEach(row => {
                 let itemNo = normArt(row['ItemNo']);
-                let mDate = parseExcelDate(row['Planned Receiving Date']);
-                let uDate = parseExcelDate(row['LatestRcvDate']);
+                let csmId = String(row['Csm Id'] || '').trim();
                 let qty = parseFloat(row['LatestQty']) || 0;
                 
                 if(!itemNo || qty <= 0) return;
                 
                 let targetWk = null;
-                if(mDate) {
-                    targetWk = getYearWeek(mDate, 0);       
-                } else if(uDate) {
-                    targetWk = getYearWeek(uDate, 7);  
+
+                // 🌟 1순위: SHP 시트 시뮬레이션 결과
+                if(csmId && csmToSimulatedWeek[csmId]) {
+                    targetWk = csmToSimulatedWeek[csmId];
+                } 
+                // 🌟 2순위: 기존 로직 백업 (국내업체 등 SHP에 없는 경우)
+                else {
+                    let mDate = parseExcelDate(row['Planned Receiving Date']);
+                    let uDate = parseExcelDate(row['LatestRcvDate']);
+                    if(mDate) targetWk = getYearWeek(mDate, 0);       
+                    else if(uDate) targetWk = getYearWeek(uDate, 7);  
                 }
                 
                 if(targetWk && projectionData.weeks.includes(targetWk)) {
@@ -323,15 +441,12 @@
 
             if (level === 'store') {
                 document.getElementById('mainTitle').innerText = `1. Store Overview (Benchmarking)`;
-                document.getElementById('subTitle').innerText = `모든 스토어의 데이터입니다. 하단 범례를 클릭하여 원하는 스토어만 비교해보세요.`;
                 renderStoreData();
             } else if (level === 'hfb') {
                 document.getElementById('mainTitle').innerText = `2. HFB Level (${store})`;
-                document.getElementById('subTitle').innerText = `해당 스토어의 모든 HFB 데이터입니다. 하단 범례를 클릭하여 원하는 HFB만 비교해보세요.`;
                 renderHFBData(store);
             } else if (level === 'article') {
                 document.getElementById('mainTitle').innerText = `3. Article Level (${store})`;
-                document.getElementById('subTitle').innerText = `좌측에서 제품 번호를 검색하세요. (예: 00546468)`;
                 renderArticleData(store);
             }
         }
@@ -368,7 +483,7 @@
         function renderStoreData() {
             let stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
             let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
-            let allY = []; // Y축 다이내믹 계산용 배열
+            let allY = [];
 
             stores.forEach(st => {
                 let storeCode = st.split(' - ')[0]; 
@@ -391,7 +506,7 @@
                     
                     let actX=[], actY=[], projX=[], projY=[], lastActX=null, lastActY=null;
                     weeks.forEach((w, i) => {
-                        allY.push(osas[i]); // 데이터 수집
+                        allY.push(osas[i]);
                         if(isProjMap[w]) {
                             if(projX.length===0 && lastActX) { projX.push(lastActX); projY.push(lastActY); }
                             projX.push(w); projY.push(osas[i]);
@@ -407,17 +522,16 @@
                 }
             });
 
-            // 🌟 동적 Y축 범위 계산
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
-            let calculatedMin = Math.max(0, minY - 0.05); // 최소값에서 5% 여유 마진
+            let calculatedMin = Math.max(0, minY - 0.05);
 
             Plotly.newPlot('chartDiv', traces, { 
                 title: 'All Stores - Weekly OSA Trend', 
                 xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] }, 
-                margin: { t: 40, b: 120 }, // 🌟 하단 여백 대폭 추가 (범례 공간)
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치 및 하단 이동
+                margin: { t: 40, b: 120 }, 
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
             });
             drawTable(['Store'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
@@ -428,7 +542,7 @@
             let hfbs = [...new Set(actData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
             
             let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
-            let allY = []; // Y축 다이내믹 계산용 배열
+            let allY = [];
 
             hfbs.forEach(hfb => {
                 let hfbNumStr = parseInt(hfb.split(' - ')[0]).toString(); 
@@ -451,7 +565,7 @@
                     
                     let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
                     weeks.forEach((w, i) => {
-                        allY.push(osas[i]); // 데이터 수집
+                        allY.push(osas[i]);
                         if(isProjMap[w]) {
                             if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
                             projX.push(w); projY.push(osas[i]);
@@ -467,7 +581,6 @@
                 }
             });
 
-            // 🌟 동적 Y축 범위 계산
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
             let calculatedMin = Math.max(0, minY - 0.05);
@@ -476,8 +589,8 @@
                 title: `All HFBs in ${store}`, 
                 xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] },
-                margin: { t: 40, b: 120 }, // 🌟 하단 여백 추가
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치
+                margin: { t: 40, b: 120 },
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
             });
             drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
@@ -499,7 +612,7 @@
             if (weeks.length === 0) { alert(`해당 기간에 "${rawItemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
 
             let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
-            let allY = []; // Y축 다이내믹 계산용 배열
+            let allY = [];
 
             weeks.forEach((w, i) => {
                 allY.push(osas[i]);
@@ -520,12 +633,11 @@
                 if(!isProjMap[wk] && weeks.includes(wk)) { 
                     let isaVal = parseFloat(d['ISA']);
                     isaX.push(wk); isaY.push(isaVal); 
-                    allY.push(isaVal); // ISA 수치도 Y축 최소값 계산에 포함
+                    allY.push(isaVal);
                 }
             });
             traces.push({ x: isaX, y: isaY, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} });
 
-            // 🌟 동적 Y축 범위 계산
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
             let calculatedMin = Math.max(0, minY - 0.05);
@@ -534,8 +646,8 @@
                 title: `Item: ${itemNo} - OSA vs Projection`, 
                 xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.0%', range: [calculatedMin, 1.05] },
-                margin: { t: 40, b: 120 }, // 🌟 하단 여백 추가
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치
+                margin: { t: 40, b: 120 },
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
             });
             
             let isaRowData = ['ISA %'];
