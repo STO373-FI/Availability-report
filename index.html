@@ -378,8 +378,12 @@
                 }
             });
 
+            // 🌟 주중 스냅샷 보정을 위한 요일 계산 (오늘 기준)
+            let todayDay = new Date().getDay(); 
+            let elapsedDays = todayDay === 0 ? 7 : todayDay; // 월=1, 화=2, ... 일=7
+            let remainDays = 7 - elapsedDays; // 수~일 = 5일
+
             excelData.AL010.forEach(row => {
-                // 🌟 핵심: SL 값이 1~4 인 활성 제품만 취급 (유령/단종 제품 완벽 컷오프)
                 let slValue = parseInt(row['SL']);
                 if (isNaN(slValue) || slValue < 1 || slValue > 4) {
                     return; 
@@ -398,20 +402,42 @@
 
                 let projOsaMap = {};
                 
-                projectionData.weeks.forEach(wk => {
+                projectionData.weeks.forEach((wk, index) => {
                     let inQty = (incoming[itemNo] && incoming[itemNo][wk]) ? incoming[itemNo][wk] : 0;
                     currentStock += inQty; 
                     
                     let osa = 0;
-                    if(avgSales <= 0) {
-                        osa = currentStock > 0 ? 1 : 0; 
-                    } else {
-                        if(currentStock >= avgSales) osa = 1; 
-                        else if(currentStock > 0) osa = currentStock / avgSales; 
-                        else osa = 0; 
+                    let salesToDeduct = avgSales;
+
+                    // 🌟 첫 번째 예측 주차(WK09) 시간 비례 보정 로직
+                    if (index === 0) {
+                        salesToDeduct = avgSales * (remainDays / 7); // 남은 요일치 판매량만 차감
+                        
+                        let remainOsa = 0;
+                        if(salesToDeduct <= 0) {
+                            remainOsa = currentStock > 0 ? 1 : 0; 
+                        } else {
+                            if(currentStock >= salesToDeduct) remainOsa = 1; 
+                            else if(currentStock > 0) remainOsa = currentStock / salesToDeduct; 
+                            else remainOsa = 0; 
+                        }
+                        
+                        // 주간 전체 OSA = (지나간 요일 * 100% 긍정가정) + (남은 요일 * 예측 OSA)
+                        osa = ((elapsedDays * 1) + (remainDays * remainOsa)) / 7;
+                    } 
+                    // 두 번째 주차부터는 정상 차감
+                    else {
+                        if(avgSales <= 0) {
+                            osa = currentStock > 0 ? 1 : 0; 
+                        } else {
+                            if(currentStock >= avgSales) osa = 1; 
+                            else if(currentStock > 0) osa = currentStock / avgSales; 
+                            else osa = 0; 
+                        }
                     }
+
                     projOsaMap[wk] = Math.min(1, Math.max(0, osa)); 
-                    currentStock = Math.max(0, currentStock - avgSales); 
+                    currentStock = Math.max(0, currentStock - salesToDeduct); 
                     
                     if(!projectionData.hfb[storeId][hfb][wk]) projectionData.hfb[storeId][hfb][wk] = { sum:0, cnt:0 };
                     projectionData.hfb[storeId][hfb][wk].sum += projOsaMap[wk];
@@ -494,210 +520,4 @@
 
             if(projectionData.weeks.length > 0) {
                 let projObj = extractProjFunc();
-                if(projObj) {
-                    projectionData.weeks.forEach(wk => {
-                        if(wk >= fromWk && wk <= toWk && projObj[wk] !== undefined) {
-                            weeks.push(wk); osas.push(projObj[wk]); isProjMap[wk] = true;
-                        }
-                    });
-                }
-            }
-            return { weeks, osas, isProjMap };
-        }
-
-        function renderStoreData() {
-            let stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
-            let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
-            let allY = []; 
-
-            stores.forEach(st => {
-                let storeCode = st.split(' - ')[0]; 
-                let stActuals = excelData.STO_OSA.filter(d => d['BU - Business Unit'] === st);
-                
-                let { weeks, osas, isProjMap } = getCombinedData(stActuals, storeCode, () => {
-                    if(projectionData.store[storeCode]) {
-                        let res = {};
-                        for(let w in projectionData.store[storeCode]) {
-                            let cnt = projectionData.store[storeCode][w].cnt;
-                            res[w] = cnt > 0 ? projectionData.store[storeCode][w].sum / cnt : 0;
-                        }
-                        return res;
-                    }
-                    return null;
-                });
-
-                if (weeks.length > 0) {
-                    if(tableWeeks.length === 0) { tableWeeks = weeks; isProjFlags = isProjMap; } 
-                    
-                    let actX=[], actY=[], projX=[], projY=[], lastActX=null, lastActY=null;
-                    weeks.forEach((w, i) => {
-                        allY.push(osas[i]); 
-                        if(isProjMap[w]) {
-                            if(projX.length===0 && lastActX) { projX.push(lastActX); projY.push(lastActY); }
-                            projX.push(w); projY.push(osas[i]);
-                        } else {
-                            actX.push(w); actY.push(osas[i]); lastActX = w; lastActY = osas[i];
-                        }
-                    });
-
-                    traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: st, legendgroup: st });
-                    if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', line: { dash: 'dot', width: 2 }, name: st + ' (Proj)', showlegend: false, legendgroup: st });
-
-                    tableRows.push([st].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
-                }
-            });
-
-            let validY = allY.filter(v => !isNaN(v) && v !== null);
-            let minY = validY.length > 0 ? Math.min(...validY) : 0;
-            let calculatedMin = Math.max(0, minY - 0.05); 
-
-            Plotly.newPlot('chartDiv', traces, { 
-                title: 'All Stores - Weekly OSA Trend', 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] }, 
-                margin: { t: 40, b: 120 }, 
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
-            });
-            drawTable(['Store'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
-        }
-
-        function renderHFBData(store) {
-            let storeCode = store.split(' - ')[0];
-            let actData = excelData.HFB.filter(d => d['BU - Business Unit'] === store);
-            let hfbs = [...new Set(actData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
-            
-            let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
-            let allY = []; 
-
-            hfbs.forEach(hfb => {
-                let hfbNumStr = parseInt(hfb.split(' - ')[0]).toString(); 
-                let hfbActuals = actData.filter(d => d['HFB Name - Home Furnishing Business Name'] === hfb);
-                
-                let { weeks, osas, isProjMap } = getCombinedData(hfbActuals, storeCode, () => {
-                    if(projectionData.hfb[storeCode] && projectionData.hfb[storeCode][hfbNumStr]) {
-                        let res = {};
-                        for(let w in projectionData.hfb[storeCode][hfbNumStr]) {
-                            let cnt = projectionData.hfb[storeCode][hfbNumStr][w].cnt;
-                            res[w] = cnt > 0 ? projectionData.hfb[storeCode][hfbNumStr][w].sum / cnt : 0;
-                        }
-                        return res;
-                    }
-                    return null;
-                });
-
-                if (weeks.length > 0) {
-                    if(tableWeeks.length === 0) { tableWeeks = weeks; isProjFlags = isProjMap; }
-                    
-                    let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
-                    weeks.forEach((w, i) => {
-                        allY.push(osas[i]); 
-                        if(isProjMap[w]) {
-                            if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
-                            projX.push(w); projY.push(osas[i]);
-                        } else {
-                            actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
-                        }
-                    });
-
-                    traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: hfb, legendgroup: hfb });
-                    if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', line: { dash: 'dot' }, name: hfb, showlegend: false, legendgroup: hfb });
-
-                    tableRows.push([hfb].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
-                }
-            });
-
-            let validY = allY.filter(v => !isNaN(v) && v !== null);
-            let minY = validY.length > 0 ? Math.min(...validY) : 0;
-            let calculatedMin = Math.max(0, minY - 0.05);
-
-            Plotly.newPlot('chartDiv', traces, { 
-                title: `All HFBs in ${store}`, 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] },
-                margin: { t: 40, b: 120 }, 
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
-            });
-            drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
-        }
-
-        function renderArticleData(store) {
-            const rawItemNo = document.getElementById('articleInput').value.trim();
-            const itemNo = normArt(rawItemNo);
-            
-            if(!itemNo) { Plotly.newPlot('chartDiv', []); drawTable([], []); return; }
-            
-            let storeCode = store.split(' - ')[0];
-            let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
-            
-            let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
-                if(projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) return projectionData.article[storeCode][itemNo];
-                return null;
-            });
-
-            if (weeks.length === 0) { alert(`해당 기간에 "${rawItemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
-
-            let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
-            let allY = []; 
-
-            weeks.forEach((w, i) => {
-                allY.push(osas[i]);
-                if(isProjMap[w]) {
-                    if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
-                    projX.push(w); projY.push(osas[i]);
-                } else {
-                    actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
-                }
-            });
-
-            let traces = [{ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3'} }];
-            if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: {color: '#0058a3', dash: 'dot'} });
-
-            let isaX = [], isaY = [];
-            actuals.forEach(d => {
-                let wk = String(d['YW - Year Week']);
-                if(!isProjMap[wk] && weeks.includes(wk)) { 
-                    let isaVal = parseFloat(d['ISA']);
-                    isaX.push(wk); isaY.push(isaVal); 
-                    allY.push(isaVal); 
-                }
-            });
-            traces.push({ x: isaX, y: isaY, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} });
-
-            let validY = allY.filter(v => !isNaN(v) && v !== null);
-            let minY = validY.length > 0 ? Math.min(...validY) : 0;
-            let calculatedMin = Math.max(0, minY - 0.05);
-
-            Plotly.newPlot('chartDiv', traces, { 
-                title: `Item: ${itemNo} - OSA vs Projection`, 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.0%', range: [calculatedMin, 1.05] },
-                margin: { t: 40, b: 120 }, 
-                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
-            });
-            
-            let isaRowData = ['ISA %'];
-            weeks.forEach(w => {
-                let match = actuals.find(d => normArt(d['Item Number']) === itemNo && String(d['YW - Year Week']) === w);
-                isaRowData.push(match ? (parseFloat(match['ISA']) * 100).toFixed(1) + '%' : '-');
-            });
-            drawTable(['Metric'].concat(weeks), [['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%')), isaRowData], weeks.map(w => isProjMap[w]));
-        }
-
-        function drawTable(headers, rows, isProjArray = []) {
-            if(headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
-            
-            document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
-                let isProj = (i > 0 && isProjArray[i-1]) ? true : false; 
-                return `<th class="${isProj ? 'proj-col' : ''}">${h} ${isProj ? '<br>(Proj)' : ''}</th>`;
-            }).join('');
-            
-            document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map((c, i) => {
-                let isProj = (i > 0 && isProjArray[i-1]) ? true : false;
-                return `<td class="${isProj ? 'proj-cell' : ''}">${c}</td>`;
-            }).join('')}</tr>`).join('');
-        }
-
-        window.onload = loadExcelFiles;
-    </script>
-</body>
-</html>
+                if
