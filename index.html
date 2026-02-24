@@ -8,7 +8,8 @@
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
-        .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; z-index: 10; }
+        .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; z-index: 10; display: flex; flex-direction: column; }
+        .sidebar-content { flex-grow: 1; }
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; cursor: pointer; transition: opacity 0.2s; }
         .sidebar h2:hover { opacity: 0.8; }
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
@@ -18,6 +19,11 @@
         .sidebar button.danger { background-color: #e74c3c; color: white; cursor: pointer; margin-top: 30px; border: 1px solid #c0392b; }
         .sidebar button.danger:hover { background-color: #c0392b; }
         
+        /* 🌟 버전 정보 CSS */
+        .version-info { margin-top: 40px; padding-top: 15px; border-top: 1px solid rgba(255, 255, 255, 0.2); font-size: 13px; text-align: center; }
+        .version-text { color: white; font-weight: bold; font-size: 15px; }
+        .update-text { color: #ffd100; margin-top: 4px; font-weight: bold; }
+
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
         
@@ -44,36 +50,43 @@
 <body>
 
     <div class="sidebar">
-        <h2 onclick="window.location.reload();" title="홈페이지로 돌아가기">📊 Availability Report</h2>
-        
-        <label>1. View Level</label>
-        <select id="viewLevel" onchange="updateView()">
-            <option value="store">1. Store Overview</option>
-            <option value="hfb">2. HFB Level</option>
-            <option value="article">3. Article Level</option>
-        </select>
-        
-        <label>⏱️ Time Period</label>
-        <div class="time-filter-container">
-            <select id="fromWeek" onchange="updateView()"><option>Loading...</option></select>
-            <span style="color: white; font-weight: bold;">~</span>
-            <select id="toWeek" onchange="updateView()"><option>Loading...</option></select>
-        </div>
-
-        <div id="storeFilter" style="display: none;">
-            <label>2. Select Store</label>
-            <select id="storeSelect" onchange="updateView()">
-                <option value="Loading...">Loading...</option>
+        <div class="sidebar-content">
+            <h2 onclick="window.location.reload();" title="홈페이지로 돌아가기">📊 Availability Report</h2>
+            
+            <label>1. View Level</label>
+            <select id="viewLevel" onchange="updateView()">
+                <option value="store">1. Store Overview</option>
+                <option value="hfb">2. HFB Level</option>
+                <option value="article">3. Article Level</option>
             </select>
+            
+            <label>⏱️ Time Period</label>
+            <div class="time-filter-container">
+                <select id="fromWeek" onchange="updateView()"><option>Loading...</option></select>
+                <span style="color: white; font-weight: bold;">~</span>
+                <select id="toWeek" onchange="updateView()"><option>Loading...</option></select>
+            </div>
+
+            <div id="storeFilter" style="display: none;">
+                <label>2. Select Store</label>
+                <select id="storeSelect" onchange="updateView()">
+                    <option value="Loading...">Loading...</option>
+                </select>
+            </div>
+
+            <div id="articleFilter" style="display: none;">
+                <label>3. Search Article</label>
+                <input type="text" id="articleInput" placeholder="ex) 00546468" onkeypress="handleEnter(event)">
+                <button class="primary" onclick="updateView()">🔍 Search</button>
+            </div>
+
+            <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
         </div>
 
-        <div id="articleFilter" style="display: none;">
-            <label>3. Search Article</label>
-            <input type="text" id="articleInput" placeholder="ex) 00546468" onkeypress="handleEnter(event)">
-            <button class="primary" onclick="updateView()">🔍 Search</button>
+        <div class="version-info">
+            <div class="version-text">ver 1.0.1</div>
+            <div class="update-text">Last Updated: 2026.02.24</div>
         </div>
-
-        <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
     </div>
 
     <div class="main-content">
@@ -108,7 +121,6 @@
         let lastActualWeek = "";
         let csmToSimulatedWeek = {}; 
 
-        // --- 🌟 IndexedDB 캐싱 시스템 구축 ---
         const DB_NAME = "OsaDashboardDB";
         const STORE_NAME = "cache";
 
@@ -140,7 +152,7 @@
         }
 
         async function forceRefreshCache() {
-            if(confirm("저장된 엑셀 캐시를 삭제하고 파일을 다시 다운로드하시겠습니까?\n(약 5~10초 소요)")) {
+            if(confirm("저장된 엑셀 캐시를 삭제하고 파일을 다시 분석하시겠습니까?\n(약 5~10초 소요됩니다)")) {
                 let db = await openDB();
                 let tx = db.transaction(STORE_NAME, 'readwrite');
                 tx.objectStore(STORE_NAME).clear();
@@ -215,12 +227,10 @@
             }) : [];
         };
 
-        // --- 🌟 데이터 로드 메인 (캐시 검증 포함) ---
         async function loadExcelFiles() {
             try {
                 let db = await openDB();
                 
-                // 파일 업데이트 여부 확인 (HEAD 요청)
                 let osaMod = 'unknown1', ordMod = 'unknown2';
                 try {
                     let h1 = await fetch('./FY26 OSA.xlsx', {method: 'HEAD'});
@@ -232,9 +242,8 @@
                 let cachedOsaMod = await getDB(db, 'osa_mod');
                 let cachedOrdMod = await getDB(db, 'ord_mod');
 
-                // 🌟 캐시 매칭 시 초고속 로딩
                 if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
-                    updateLoadingStatus("저장된 캐시 데이터를 불러옵니다. (초고속 로딩 ⚡)");
+                    updateLoadingStatus("저장된 엑셀 캐시를 불러옵니다. (초고속 로딩 ⚡)");
                     excelData.STO_OSA = await getDB(db, 'STO_OSA');
                     excelData.HFB = await getDB(db, 'HFB');
                     excelData.Article_level = await getDB(db, 'Article_level');
@@ -252,7 +261,6 @@
                     }
                 }
 
-                // 🌟 캐시 불일치 시 새로 다운로드 & 분석 (UI 프리징 방지를 위한 await 분할)
                 updateLoadingStatus("1/5: 새 엑셀 파일을 다운로드 중입니다...");
                 const [res1, res2] = await Promise.all([ fetch('./FY26 OSA.xlsx'), fetch('./Order.xlsx') ]);
                 const ab1 = await res1.arrayBuffer();
@@ -275,7 +283,6 @@
                 let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
                 excelData.SHP = rawShpData.slice(1); 
 
-                // DB 저장
                 updateLoadingStatus("4/5: 데이터를 캐시에 저장 중입니다...");
                 await putDB(db, 'osa_mod', osaMod);
                 await putDB(db, 'ord_mod', ordMod);
@@ -425,7 +432,6 @@
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
             lastActualWeek = allWeeks[allWeeks.length - 1]; 
             
-            // 🌟 이중 방어 필터: "마지막 실적 주차(WK08)에 실제로 관리된 품목 리스트"를 추출합니다. (유령 데이터 방지)
             let activeStoreArticles = {};
             excelData.Article_level.forEach(d => {
                 let wk = String(d['YW - Year Week']);
@@ -477,25 +483,25 @@
                 }
             });
 
-            // 🌟 주중 스냅샷 보정 로직
             let todayDay = new Date().getDay(); 
-            let elapsedDays = todayDay === 0 ? 7 : todayDay; // 월=1, 화=2, ... 일=7
-            let remainDays = 7 - elapsedDays; // 수~일 = 5일
+            let elapsedDays = todayDay === 0 ? 7 : todayDay; 
+            let remainDays = 7 - elapsedDays; 
 
             excelData.AL010.forEach(row => {
                 let slValue = parseInt(row['SL']);
-                // 1. SL 1~4 필터 (취급 제외품목 컷오프)
                 if (isNaN(slValue) || slValue < 1 || slValue > 4) return; 
 
                 let storeId = String(row['MHS_ID']); 
                 let itemNo = normArt(row['ARTNO']);
                 
-                // 2. 이중 컷오프: 실제 관리대상 품목(WK08)에 없는 1,442개의 유령 데이터 버리기
                 if (!activeStoreArticles[storeId] || !activeStoreArticles[storeId].has(itemNo)) return;
 
                 let hfb = String(row['HFB']);
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
+                
+                // 🌟 버그 픽스: 오늘 기준 재고를 저장 (과거 요일 OSA 판별용)
+                let originalStock = currentStock; 
 
                 if(!projectionData.article[storeId]) projectionData.article[storeId] = {};
                 if(!projectionData.hfb[storeId]) projectionData.hfb[storeId] = {};
@@ -511,7 +517,6 @@
                     let osa = 0;
                     let salesToDeduct = avgSales;
 
-                    // 첫 주차(WK09)는 남은 요일 비율만큼만 판매 차감 및 OSA 보정
                     if (index === 0) {
                         salesToDeduct = avgSales * (remainDays / 7); 
                         
@@ -524,7 +529,10 @@
                             else remainOsa = 0; 
                         }
                         
-                        osa = ((elapsedDays * 1) + (remainDays * remainOsa)) / 7;
+                        // 🌟 인플레이션 버그 해결: 현재 재고가 0이면 과거(월,화)도 0% 결품으로 계산!
+                        let pastOsa = (originalStock > 0) ? 1 : 0;
+                        
+                        osa = ((elapsedDays * pastOsa) + (remainDays * remainOsa)) / 7;
                     } 
                     else {
                         if(avgSales <= 0) {
