@@ -19,10 +19,6 @@
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
         
-        .upload-section { margin-top: 30px; padding-top: 15px; border-top: 1px dashed #668cff; }
-        .upload-section input[type="file"] { background-color: transparent; color: white; padding: 0; font-size: 12px; margin-top: 10px; }
-        #fileStatus { font-size: 12px; color: #a3c2ff; margin-top: 5px; line-height: 1.4; }
-        
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
         .header-desc { font-size: 14px; color: #666; margin-bottom: 20px; }
@@ -82,7 +78,7 @@
         
         <div id="loading">
             <div class="spinner"></div>
-            <span id="loadingText">데이터를 불러오는 중입니다. 잠시만 기다려주세요...</span>
+            <span id="loadingText">데이터를 준비 중입니다. 잠시만 기다려주세요...</span>
         </div>
         
         <div id="dashboard" style="display: none;">
@@ -107,6 +103,12 @@
         let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
         let csmToSimulatedWeek = {}; 
+
+        function updateLoadingStatus(msg) {
+            let el = document.getElementById('loadingText');
+            if (el) el.innerText = msg;
+            console.log(msg);
+        }
 
         function normArt(val) {
             if (val === undefined || val === null) return "";
@@ -147,65 +149,87 @@
         }
 
         function parseExcelDate(val) {
-            if (!val) return null;
+            if (val === undefined || val === null || val === "") return null;
             if (val instanceof Date) return val;
-            if (typeof val === 'number') return new Date(Math.round((val - 25569) * 86400 * 1000));
+            if (typeof val === 'number') {
+                // 엑셀 고유 숫자형 날짜 파싱 (타임존 문제 보정 적용)
+                let d = new Date(Math.round((val - 25569) * 86400 * 1000));
+                d.setMinutes(d.getMinutes() + d.getTimezoneOffset()); 
+                return d;
+            }
             if (typeof val === 'string') {
-                let d = new Date(val);
+                let d = new Date(val.trim());
                 if (!isNaN(d.getTime())) return d;
             }
             return null;
         }
 
+        const getSheetData = (wb, name, useRaw = true) => {
+            const sheet = wb.Sheets[name];
+            return sheet ? XLSX.utils.sheet_to_json(sheet, { raw: useRaw, defval: "" }).map(row => {
+                let newRow = {};
+                for (let key in row) newRow[key.trim()] = row[key];
+                return newRow;
+            }) : [];
+        };
+
+        // 🌟 브라우저 프리징 방지를 위한 5단계 비동기 데이터 로딩 엔진
         async function loadExcelFiles() {
             try {
-                const res1 = await fetch('./FY26 OSA.xlsx');
+                updateLoadingStatus("1/5: 서버에서 엑셀 파일(FY26 OSA, Order)을 다운로드하고 있습니다...");
+                
+                const [res1, res2] = await Promise.all([
+                    fetch('./FY26 OSA.xlsx'),
+                    fetch('./Order.xlsx')
+                ]);
+
                 if (!res1.ok) throw new Error("'FY26 OSA.xlsx' 파일을 찾을 수 없습니다.");
-                const ab1 = await res1.arrayBuffer();
-                const wb1 = XLSX.read(ab1, { type: 'array', cellDates: true });
-
-                const res2 = await fetch('./Order.xlsx');
                 if (!res2.ok) throw new Error("'Order.xlsx' 파일을 찾을 수 없습니다.");
+
+                const ab1 = await res1.arrayBuffer();
                 const ab2 = await res2.arrayBuffer();
-                const wb2 = XLSX.read(ab2, { type: 'array', cellDates: true });
 
-                const getSheetData = (wb, name, useRaw = true) => {
-                    const sheet = wb.Sheets[name];
-                    return sheet ? XLSX.utils.sheet_to_json(sheet, { raw: useRaw, defval: "" }).map(row => {
-                        let newRow = {};
-                        for (let key in row) newRow[key.trim()] = row[key];
-                        return newRow;
-                    }) : [];
-                };
-
+                updateLoadingStatus("2/5: 과거 실적(FY26 OSA) 데이터를 분석 중입니다...");
+                await new Promise(r => setTimeout(r, 50)); // 브라우저 숨쉬기(UI 업데이트) 시간 허용
+                
+                // 메모리 절약을 위해 cellDates: true 옵션 제거, raw 파싱 후 수동 파싱 처리
+                const wb1 = XLSX.read(ab1, { type: 'array' });
                 excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
                 excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
                 excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA', 'ISA']);
 
+                updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (데이터가 커서 약 5~10초 소요됩니다)");
+                await new Promise(r => setTimeout(r, 50));
+                
+                const wb2 = XLSX.read(ab2, { type: 'array' });
                 excelData.AL010 = getSheetData(wb2, 'AL010');
                 excelData.Table7 = getSheetData(wb2, 'Table_7_Final');
 
                 let shpSheetName = wb2.SheetNames[3]; 
                 if(!shpSheetName) throw new Error("Order 파일에 4번째 시트(SHP)가 없습니다.");
                 let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
-                
                 excelData.SHP = rawShpData.slice(1); 
 
                 if(excelData.AL010.length === 0 || excelData.Table7.length === 0) {
-                     throw new Error("'Order.xlsx' 파일 내에 필수 시트가 없습니다.");
+                     throw new Error("'Order.xlsx' 파일 내에 필수 시트(AL010, Table_7_Final)가 없습니다.");
                 }
+
+                updateLoadingStatus("4/5: 일일 하역 CAPA(하루 5대 룰) 시뮬레이터를 가동 중입니다...");
+                await new Promise(r => setTimeout(r, 50));
+                runContainerSimulation(); 
+
+                updateLoadingStatus("5/5: 유령 제품 필터링 및 향후 가용성(Projection)을 예측 중입니다...");
+                await new Promise(r => setTimeout(r, 50));
+                calculateProjections();   
+                initFilters();
                 
-                setTimeout(() => {
-                    runContainerSimulation(); 
-                    calculateProjections();   
-                    initFilters();
-                    
-                    document.getElementById('loading').style.display = 'none';
-                    document.getElementById('dashboard').style.display = 'block';
-                }, 100);
+                // 완료 후 화면 전환
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard').style.display = 'block';
 
             } catch (error) {
-                document.getElementById('loading').innerHTML = `<span style="color:red; font-size:16px;">❌ 오류: ${error.message}</span>`;
+                // 에러 발생 시 숨김 처리 없이 에러 메세지를 띄워 원인 파악 가능하게 함
+                document.getElementById('loading').innerHTML = `<span style="color:red; font-size:16px;">❌ 연산 오류 발생: ${error.message}<br>파일 형식이 올바른지 확인해주세요.</span>`;
                 console.error(error);
             }
         }
@@ -303,7 +327,6 @@
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
-
                     if(c.type === 'HF') {
                         c.scheduled = true; totalDaily++; scheduledToday.push(c);
                     }
@@ -313,9 +336,17 @@
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
-
                     if(c.type === 'DD') {
                         c.scheduled = true; totalDaily++; scheduledToday.push(c);
+                    }
+                }
+                
+                // 알 수 없는 화물 타입도 무한 대기열 방지를 위해 강제 배출 처리
+                for(let i = qIndex; i < queuedContainers.length; i++) {
+                    let c = queuedContainers[i];
+                    if(c.scheduled) continue;
+                    if(c.type !== 'LF' && c.type !== 'DD' && c.type !== 'HF') {
+                        c.scheduled = true; scheduledToday.push(c);
                     }
                 }
 
@@ -335,8 +366,9 @@
         function calculateProjections() {
             projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
 
-            let allWeeks = excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w !== "undefined" && w !== "");
-            lastActualWeek = allWeeks.sort()[allWeeks.length - 1]; 
+            let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
+            lastActualWeek = allWeeks[allWeeks.length - 1]; 
+            if (!lastActualWeek) throw new Error("과거 실적 YW 데이터를 찾을 수 없습니다.");
             
             let y = parseInt(lastActualWeek.substring(0,4));
             let w = parseInt(lastActualWeek.substring(4,6));
@@ -378,10 +410,10 @@
                 }
             });
 
-            // 🌟 주중 스냅샷 보정을 위한 요일 계산 (오늘 기준)
+            // 요일 비례 보정(Proration)을 위한 처리 (오늘 화요일 기준 등)
             let todayDay = new Date().getDay(); 
-            let elapsedDays = todayDay === 0 ? 7 : todayDay; // 월=1, 화=2, ... 일=7
-            let remainDays = 7 - elapsedDays; // 수~일 = 5일
+            let elapsedDays = todayDay === 0 ? 7 : todayDay; 
+            let remainDays = 7 - elapsedDays; 
 
             excelData.AL010.forEach(row => {
                 let slValue = parseInt(row['SL']);
@@ -409,9 +441,8 @@
                     let osa = 0;
                     let salesToDeduct = avgSales;
 
-                    // 🌟 첫 번째 예측 주차(WK09) 시간 비례 보정 로직
                     if (index === 0) {
-                        salesToDeduct = avgSales * (remainDays / 7); // 남은 요일치 판매량만 차감
+                        salesToDeduct = avgSales * (remainDays / 7); 
                         
                         let remainOsa = 0;
                         if(salesToDeduct <= 0) {
@@ -421,11 +452,8 @@
                             else if(currentStock > 0) remainOsa = currentStock / salesToDeduct; 
                             else remainOsa = 0; 
                         }
-                        
-                        // 주간 전체 OSA = (지나간 요일 * 100% 긍정가정) + (남은 요일 * 예측 OSA)
                         osa = ((elapsedDays * 1) + (remainDays * remainOsa)) / 7;
                     } 
-                    // 두 번째 주차부터는 정상 차감
                     else {
                         if(avgSales <= 0) {
                             osa = currentStock > 0 ? 1 : 0; 
@@ -520,4 +548,210 @@
 
             if(projectionData.weeks.length > 0) {
                 let projObj = extractProjFunc();
-                if
+                if(projObj) {
+                    projectionData.weeks.forEach(wk => {
+                        if(wk >= fromWk && wk <= toWk && projObj[wk] !== undefined) {
+                            weeks.push(wk); osas.push(projObj[wk]); isProjMap[wk] = true;
+                        }
+                    });
+                }
+            }
+            return { weeks, osas, isProjMap };
+        }
+
+        function renderStoreData() {
+            let stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
+            let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
+            let allY = []; 
+
+            stores.forEach(st => {
+                let storeCode = st.split(' - ')[0]; 
+                let stActuals = excelData.STO_OSA.filter(d => d['BU - Business Unit'] === st);
+                
+                let { weeks, osas, isProjMap } = getCombinedData(stActuals, storeCode, () => {
+                    if(projectionData.store[storeCode]) {
+                        let res = {};
+                        for(let w in projectionData.store[storeCode]) {
+                            let cnt = projectionData.store[storeCode][w].cnt;
+                            res[w] = cnt > 0 ? projectionData.store[storeCode][w].sum / cnt : 0;
+                        }
+                        return res;
+                    }
+                    return null;
+                });
+
+                if (weeks.length > 0) {
+                    if(tableWeeks.length === 0) { tableWeeks = weeks; isProjFlags = isProjMap; } 
+                    
+                    let actX=[], actY=[], projX=[], projY=[], lastActX=null, lastActY=null;
+                    weeks.forEach((w, i) => {
+                        allY.push(osas[i]); 
+                        if(isProjMap[w]) {
+                            if(projX.length===0 && lastActX) { projX.push(lastActX); projY.push(lastActY); }
+                            projX.push(w); projY.push(osas[i]);
+                        } else {
+                            actX.push(w); actY.push(osas[i]); lastActX = w; lastActY = osas[i];
+                        }
+                    });
+
+                    traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: st, legendgroup: st });
+                    if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', line: { dash: 'dot', width: 2 }, name: st + ' (Proj)', showlegend: false, legendgroup: st });
+
+                    tableRows.push([st].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
+                }
+            });
+
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05); 
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: 'All Stores - Weekly OSA Trend', 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] }, 
+                margin: { t: 40, b: 120 }, 
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
+            });
+            drawTable(['Store'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
+        }
+
+        function renderHFBData(store) {
+            let storeCode = store.split(' - ')[0];
+            let actData = excelData.HFB.filter(d => d['BU - Business Unit'] === store);
+            let hfbs = [...new Set(actData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
+            
+            let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
+            let allY = []; 
+
+            hfbs.forEach(hfb => {
+                let hfbNumStr = parseInt(hfb.split(' - ')[0]).toString(); 
+                let hfbActuals = actData.filter(d => d['HFB Name - Home Furnishing Business Name'] === hfb);
+                
+                let { weeks, osas, isProjMap } = getCombinedData(hfbActuals, storeCode, () => {
+                    if(projectionData.hfb[storeCode] && projectionData.hfb[storeCode][hfbNumStr]) {
+                        let res = {};
+                        for(let w in projectionData.hfb[storeCode][hfbNumStr]) {
+                            let cnt = projectionData.hfb[storeCode][hfbNumStr][w].cnt;
+                            res[w] = cnt > 0 ? projectionData.hfb[storeCode][hfbNumStr][w].sum / cnt : 0;
+                        }
+                        return res;
+                    }
+                    return null;
+                });
+
+                if (weeks.length > 0) {
+                    if(tableWeeks.length === 0) { tableWeeks = weeks; isProjFlags = isProjMap; }
+                    
+                    let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
+                    weeks.forEach((w, i) => {
+                        allY.push(osas[i]); 
+                        if(isProjMap[w]) {
+                            if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                            projX.push(w); projY.push(osas[i]);
+                        } else {
+                            actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
+                        }
+                    });
+
+                    traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: hfb, legendgroup: hfb });
+                    if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', line: { dash: 'dot' }, name: hfb, showlegend: false, legendgroup: hfb });
+
+                    tableRows.push([hfb].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
+                }
+            });
+
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05);
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: `All HFBs in ${store}`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] },
+                margin: { t: 40, b: 120 }, 
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
+            });
+            drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
+        }
+
+        function renderArticleData(store) {
+            const rawItemNo = document.getElementById('articleInput').value.trim();
+            const itemNo = normArt(rawItemNo);
+            
+            if(!itemNo) { Plotly.newPlot('chartDiv', []); drawTable([], []); return; }
+            
+            let storeCode = store.split(' - ')[0];
+            let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
+            
+            let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
+                if(projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) return projectionData.article[storeCode][itemNo];
+                return null;
+            });
+
+            if (weeks.length === 0) { alert(`해당 기간에 "${rawItemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
+
+            let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
+            let allY = []; 
+
+            weeks.forEach((w, i) => {
+                allY.push(osas[i]);
+                if(isProjMap[w]) {
+                    if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                    projX.push(w); projY.push(osas[i]);
+                } else {
+                    actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
+                }
+            });
+
+            let traces = [{ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3'} }];
+            if(projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: {color: '#0058a3', dash: 'dot'} });
+
+            let isaX = [], isaY = [];
+            actuals.forEach(d => {
+                let wk = String(d['YW - Year Week']);
+                if(!isProjMap[wk] && weeks.includes(wk)) { 
+                    let isaVal = parseFloat(d['ISA']);
+                    isaX.push(wk); isaY.push(isaVal); 
+                    allY.push(isaVal); 
+                }
+            });
+            traces.push({ x: isaX, y: isaY, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} });
+
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05);
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: `Item: ${itemNo} - OSA vs Projection`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.0%', range: [calculatedMin, 1.05] },
+                margin: { t: 40, b: 120 }, 
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
+            });
+            
+            let isaRowData = ['ISA %'];
+            weeks.forEach(w => {
+                let match = actuals.find(d => normArt(d['Item Number']) === itemNo && String(d['YW - Year Week']) === w);
+                isaRowData.push(match ? (parseFloat(match['ISA']) * 100).toFixed(1) + '%' : '-');
+            });
+            drawTable(['Metric'].concat(weeks), [['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%')), isaRowData], weeks.map(w => isProjMap[w]));
+        }
+
+        function drawTable(headers, rows, isProjArray = []) {
+            if(headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
+            
+            document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
+                let isProj = (i > 0 && isProjArray[i-1]) ? true : false; 
+                return `<th class="${isProj ? 'proj-col' : ''}">${h} ${isProj ? '<br>(Proj)' : ''}</th>`;
+            }).join('');
+            
+            document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map((c, i) => {
+                let isProj = (i > 0 && isProjArray[i-1]) ? true : false;
+                return `<td class="${isProj ? 'proj-cell' : ''}">${c}</td>`;
+            }).join('')}</tr>`).join('');
+        }
+
+        window.onload = loadExcelFiles;
+    </script>
+</body>
+</html>
