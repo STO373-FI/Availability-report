@@ -11,20 +11,21 @@
         .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; }
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; }
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
-        .sidebar select { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; }
+        .sidebar select, .sidebar input, .sidebar button { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; box-sizing: border-box; }
+        .sidebar button { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
+        .sidebar button:hover { background-color: #ffd633; }
         
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
-        .header-title { font-size: 28px; font-weight: bold; margin-bottom: 20px; color: #003399; }
+        .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
+        .header-desc { font-size: 14px; color: #666; margin-bottom: 20px; }
         
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         
-        /* 피벗된 테이블은 가로로 길어질 수 있으므로 스크롤 처리 */
         .table-container { overflow-x: auto; white-space: nowrap; }
-        table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; }
+        table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; width: 100%; }
         th, td { padding: 10px 15px; border: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #333; font-weight: bold; }
-        /* 첫 번째 열(이름/지표) 강조 및 고정 효과 부여 가능 */
-        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; }
+        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; } /* 첫 열 고정 */
         
         #loading { color: #d9534f; font-weight: bold; font-size: 16px; margin-bottom: 20px; }
     </style>
@@ -32,42 +33,41 @@
 <body>
 
     <div class="sidebar">
-        <h2>📊 STO373<br>Availability Report</h2>
+        <h2>📊 Availability Report</h2>
         
-        <label>View Level</label>
+        <label>1. View Level</label>
         <select id="viewLevel" onchange="updateView()">
             <option value="store">1. Store Overview</option>
             <option value="hfb">2. HFB Level</option>
             <option value="article">3. Article Level</option>
         </select>
 
-        <label>Store</label>
-        <select id="storeSelect" onchange="updateView()">
-            <option value="Loading...">Loading...</option>
-        </select>
-        
-        <div id="hfbFilter" style="display: none;">
-            <label>HFB</label>
-            <select id="hfbSelect" onchange="updateView()"></select>
+        <div id="storeFilter" style="display: none;">
+            <label>2. Select Store</label>
+            <select id="storeSelect" onchange="updateView()">
+                <option value="Loading...">Loading...</option>
+            </select>
         </div>
 
         <div id="articleFilter" style="display: none;">
-            <label>Article (Item No.)</label>
-            <select id="articleSelect" onchange="updateView()"></select>
+            <label>3. Search Article</label>
+            <input type="text" id="articleInput" placeholder="ex) 157717" onkeypress="handleEnter(event)">
+            <button onclick="updateView()">🔍 Search</button>
         </div>
     </div>
 
     <div class="main-content">
         <div class="header-title" id="mainTitle">Store Overview</div>
+        <div class="header-desc" id="subTitle">우측 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다.</div>
         <div id="loading">데이터(FY26 OSA.xlsx)를 불러오는 중입니다. 잠시만 기다려주세요...</div>
         
         <div id="dashboard" style="display: none;">
             <div class="card">
-                <div id="chartDiv" style="width:100%; height:400px;"></div>
+                <div id="chartDiv" style="width:100%; height:450px;"></div>
             </div>
             
             <div class="card">
-                <h3 style="margin-top:0; color:#333; font-size:18px;">Data Details</h3>
+                <h3 style="margin-top:0; color:#333; font-size:18px;">Data Table</h3>
                 <div class="table-container">
                     <table id="dataTable">
                         <thead><tr id="tableHead"></tr></thead>
@@ -120,120 +120,142 @@
             updateView();
         }
 
+        function handleEnter(e) {
+            if (e.key === 'Enter') updateView();
+        }
+
         function updateView() {
             const level = document.getElementById('viewLevel').value;
             const store = document.getElementById('storeSelect').value;
             
-            document.getElementById('hfbFilter').style.display = (level === 'hfb' || level === 'article') ? 'block' : 'none';
+            // 필터 UI 제어
+            document.getElementById('storeFilter').style.display = (level === 'hfb' || level === 'article') ? 'block' : 'none';
             document.getElementById('articleFilter').style.display = (level === 'article') ? 'block' : 'none';
 
             if (level === 'store') {
-                document.getElementById('mainTitle').innerText = `1. Store Overview (${store})`;
-                renderStoreData(store);
+                document.getElementById('mainTitle').innerText = `1. Store Overview (Benchmarking)`;
+                document.getElementById('subTitle').innerText = "모든 스토어의 데이터입니다. 우측 범례를 클릭하여 원하는 스토어만 비교해보세요.";
+                renderStoreData();
             } else if (level === 'hfb') {
                 document.getElementById('mainTitle').innerText = `2. HFB Level (${store})`;
-                updateHFBDropdown(store);
+                document.getElementById('subTitle').innerText = "해당 스토어의 모든 HFB 데이터입니다. 우측 범례를 클릭하여 원하는 HFB만 비교해보세요.";
                 renderHFBData(store);
             } else if (level === 'article') {
                 document.getElementById('mainTitle').innerText = `3. Article Level (${store})`;
-                updateHFBDropdown(store); 
-                updateArticleDropdown(store);
+                document.getElementById('subTitle').innerText = "좌측에서 제품 번호를 검색하세요. (예: 157717)";
                 renderArticleData(store);
             }
         }
 
-        function updateHFBDropdown(store) {
-            const hfbSelect = document.getElementById('hfbSelect');
-            const currentVal = hfbSelect.value;
-            const hfbs = [...new Set(excelData.HFB.filter(d => d['BU - Business Unit'] === store).map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
-            hfbSelect.innerHTML = hfbs.map(h => `<option value="${h}">${h}</option>`).join('');
-            if (hfbs.includes(currentVal)) hfbSelect.value = currentVal;
-        }
+        // 1. 모든 스토어 벤치마킹
+        function renderStoreData() {
+            let validData = excelData.STO_OSA.filter(d => d['OSA'] !== "" && !isNaN(parseFloat(d['OSA'])));
+            let weeks = [...new Set(validData.map(d => String(d['YW - Year Week'])))].sort();
+            let stores = [...new Set(validData.map(d => d['BU - Business Unit']))].sort();
 
-        function updateArticleDropdown(store) {
-            const hfb = document.getElementById('hfbSelect').value;
-            const articleSelect = document.getElementById('articleSelect');
-            const rawArticles = excelData.Article_level.filter(d => d['BU - Business Unit'] === store);
-            const articles = [...new Set(rawArticles.map(d => d['Item Number'] + " - " + d['artname']))].sort();
-            articleSelect.innerHTML = articles.map(a => `<option value="${a.split(' - ')[0]}">${a}</option>`).join('');
-        }
+            let traces = [];
+            let rows = [];
 
-        // --- 렌더링 로직 (X축 문자로 강제, 빈 데이터 제거, 테이블 피벗) ---
+            stores.forEach(st => {
+                let stData = validData.filter(d => d['BU - Business Unit'] === st).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
+                
+                // 차트 트레이스 추가
+                traces.push({
+                    x: stData.map(d => String(d['YW - Year Week'])), 
+                    y: stData.map(d => parseFloat(d['OSA'])),
+                    type: 'scatter', mode: 'lines+markers', name: st
+                });
 
-        function renderStoreData(store) {
-            // 빈 데이터(미래 예측분 등) 제거 필터링 추가
-            let data = excelData.STO_OSA.filter(d => 
-                d['BU - Business Unit'] === store && d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
-            ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
-            
-            const weeks = data.map(d => String(d['YW - Year Week'])); // X축 강제 문자화
-            const osas = data.map(d => parseFloat(d['OSA']));
+                // 테이블 행 구성 (주차별로 매핑)
+                let rowData = [st];
+                weeks.forEach(w => {
+                    let match = stData.find(d => String(d['YW - Year Week']) === w);
+                    rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
+                });
+                rows.push(rowData);
+            });
 
-            Plotly.newPlot('chartDiv', [{
-                x: weeks, y: osas,
-                type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3', width: 3}
-            }], { 
-                title: 'Weekly OSA Trend', 
-                xaxis: { type: 'category' }, // Category 속성 추가하여 2025.3k 방지
+            Plotly.newPlot('chartDiv', traces, { 
+                title: 'All Stores - Weekly OSA Trend', 
+                xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.1%', range: [0.8, 1.05] }, margin: { t: 40, b: 40 }
             });
 
-            // 테이블 피벗: 열 이름은 Store + 주차들
-            const headers = ['Store'].concat(weeks);
-            const rowData = [store].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
-            drawTable(headers, [rowData]);
+            drawTable(['Store'].concat(weeks), rows);
         }
 
+        // 2. 스토어 내 모든 HFB 벤치마킹
         function renderHFBData(store) {
-            const hfb = document.getElementById('hfbSelect').value;
-            if(!hfb) return;
-            
-            let data = excelData.HFB.filter(d => 
-                d['BU - Business Unit'] === store && d['HFB Name - Home Furnishing Business Name'] === hfb && 
-                d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
-            ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
-            
-            const weeks = data.map(d => String(d['YW - Year Week']));
-            const osas = data.map(d => parseFloat(d['OSA']));
+            let validData = excelData.HFB.filter(d => d['BU - Business Unit'] === store && d['OSA'] !== "" && !isNaN(parseFloat(d['OSA'])));
+            let weeks = [...new Set(validData.map(d => String(d['YW - Year Week'])))].sort();
+            let hfbs = [...new Set(validData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
 
-            Plotly.newPlot('chartDiv', [{
-                x: weeks, y: osas,
-                type: 'scatter', mode: 'lines+markers', line: {color: '#e00751', width: 3}
-            }], { 
-                title: `${hfb} - OSA Trend`, 
+            let traces = [];
+            let rows = [];
+
+            hfbs.forEach(hfb => {
+                let hData = validData.filter(d => d['HFB Name - Home Furnishing Business Name'] === hfb).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
+                
+                traces.push({
+                    x: hData.map(d => String(d['YW - Year Week'])), 
+                    y: hData.map(d => parseFloat(d['OSA'])),
+                    type: 'scatter', mode: 'lines+markers', name: hfb
+                });
+
+                let rowData = [hfb];
+                weeks.forEach(w => {
+                    let match = hData.find(d => String(d['YW - Year Week']) === w);
+                    rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
+                });
+                rows.push(rowData);
+            });
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: `All HFBs in ${store} - OSA Trend`, 
                 xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.1%', range: [0.7, 1.05] } 
             });
 
-            const headers = ['HFB Name'].concat(weeks);
-            const rowData = [hfb].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
-            drawTable(headers, [rowData]);
+            drawTable(['HFB Name'].concat(weeks), rows);
         }
 
+        // 3. Article 검색 결과
         function renderArticleData(store) {
-            const itemNo = document.getElementById('articleSelect').value;
-            if(!itemNo) return;
+            const itemNo = document.getElementById('articleInput').value.trim();
+            
+            if(!itemNo) {
+                Plotly.newPlot('chartDiv', []);
+                drawTable([], []);
+                return;
+            }
             
             let data = excelData.Article_level.filter(d => 
                 d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo &&
                 d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
             ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
             
+            if (data.length === 0) {
+                alert(`"${itemNo}" 에 해당하는 제품 데이터를 찾을 수 없습니다.\n스토어와 제품 번호를 다시 확인해주세요.`);
+                return;
+            }
+
             const weeks = data.map(d => String(d['YW - Year Week']));
             const osas = data.map(d => parseFloat(d['OSA']));
             const isas = data.map(d => parseFloat(d['ISA']));
+            const artName = data[0]['artname'];
+
+            document.getElementById('mainTitle').innerText = `3. Article Level (${store}) - [${itemNo}] ${artName}`;
 
             Plotly.newPlot('chartDiv', [
                 { x: weeks, y: osas, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3'} },
                 { x: weeks, y: isas, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} }
             ], { 
-                title: `Item ${itemNo} - OSA vs ISA`, 
+                title: `Item: ${itemNo} (${artName}) - OSA vs ISA`, 
                 xaxis: { type: 'category' }, 
                 yaxis: { tickformat: '.0%', range: [0, 1.05] } 
             });
 
             const headers = ['Metric'].concat(weeks);
-            // Article 레벨은 OSA, ISA 두 줄로 표시
             const osaRow = ['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
             const isaRow = ['ISA %'].concat(isas.map(v => (v * 100).toFixed(1) + '%'));
             
@@ -241,6 +263,11 @@
         }
 
         function drawTable(headers, rows) {
+            if(headers.length === 0) {
+                document.getElementById('tableHead').innerHTML = "";
+                document.getElementById('tableBody').innerHTML = "";
+                return;
+            }
             document.getElementById('tableHead').innerHTML = headers.map(h => `<th>${h}</th>`).join('');
             document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
         }
