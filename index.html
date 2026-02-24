@@ -8,12 +8,15 @@
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
-        .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; }
+        .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; }
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; }
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
         .sidebar select, .sidebar input, .sidebar button { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; box-sizing: border-box; }
         .sidebar button { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
         .sidebar button:hover { background-color: #ffd633; }
+        
+        .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
+        .time-filter-container select { margin-top: 0; }
         
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
@@ -25,7 +28,7 @@
         table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; width: 100%; }
         th, td { padding: 10px 15px; border: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #333; font-weight: bold; }
-        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; } /* 첫 열 고정 */
+        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; z-index: 1; } 
         
         #loading { color: #d9534f; font-weight: bold; font-size: 16px; margin-bottom: 20px; }
     </style>
@@ -41,6 +44,13 @@
             <option value="hfb">2. HFB Level</option>
             <option value="article">3. Article Level</option>
         </select>
+        
+        <label>⏱️ Time Period (Year-Week)</label>
+        <div class="time-filter-container">
+            <select id="fromWeek" onchange="updateView()"><option>Loading...</option></select>
+            <span style="color: white; font-weight: bold;">~</span>
+            <select id="toWeek" onchange="updateView()"><option>Loading...</option></select>
+        </div>
 
         <div id="storeFilter" style="display: none;">
             <label>2. Select Store</label>
@@ -63,7 +73,7 @@
         
         <div id="dashboard" style="display: none;">
             <div class="card">
-                <div id="chartDiv" style="width:100%; height:450px;"></div>
+                <div id="chartDiv" style="width:100%; height:600px;"></div>
             </div>
             
             <div class="card">
@@ -114,14 +124,47 @@
         }
 
         function initFilters() {
+            // 1. 기간(Year-Week) 필터 초기화
+            let allWeeks = new Set();
+            excelData.STO_OSA.forEach(d => {
+                if(d['YW - Year Week'] && d['OSA'] !== "") allWeeks.add(String(d['YW - Year Week']));
+            });
+            let weeksArr = [...allWeeks].sort();
+            
+            const fromSelect = document.getElementById('fromWeek');
+            const toSelect = document.getElementById('toWeek');
+            
+            const weekOptions = weeksArr.map(w => `<option value="${w}">${w}</option>`).join('');
+            fromSelect.innerHTML = weekOptions;
+            toSelect.innerHTML = weekOptions;
+            
+            if(weeksArr.length > 0) {
+                fromSelect.value = weeksArr[0]; // From은 첫 번째 주차
+                toSelect.value = weeksArr[weeksArr.length - 1]; // To는 마지막 주차
+            }
+
+            // 2. Store 필터 초기화
             const stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
             const storeSelect = document.getElementById('storeSelect');
             storeSelect.innerHTML = stores.map(s => `<option value="${s}" ${s.includes('373') ? 'selected' : ''}>${s}</option>`).join('');
+            
             updateView();
         }
 
         function handleEnter(e) {
             if (e.key === 'Enter') updateView();
+        }
+
+        // 공통: 선택된 기간에 맞게 데이터 필터링하는 헬퍼 함수
+        function filterByTime(dataArray) {
+            const fromWk = document.getElementById('fromWeek').value;
+            const toWk = document.getElementById('toWeek').value;
+            
+            // From이 To보다 크면 경고 없이 빈 데이터 반환
+            return dataArray.filter(d => {
+                const wk = String(d['YW - Year Week']);
+                return wk >= fromWk && wk <= toWk && d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']));
+            });
         }
 
         function updateView() {
@@ -147,11 +190,11 @@
             }
         }
 
-        // 1. 모든 스토어 벤치마킹
+        // 1. 모든 스토어 벤치마킹 (기간 필터 적용)
         function renderStoreData() {
-            let validData = excelData.STO_OSA.filter(d => d['OSA'] !== "" && !isNaN(parseFloat(d['OSA'])));
+            let validData = filterByTime(excelData.STO_OSA);
             let weeks = [...new Set(validData.map(d => String(d['YW - Year Week'])))].sort();
-            let stores = [...new Set(validData.map(d => d['BU - Business Unit']))].sort();
+            let stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
 
             let traces = [];
             let rows = [];
@@ -159,34 +202,34 @@
             stores.forEach(st => {
                 let stData = validData.filter(d => d['BU - Business Unit'] === st).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
                 
-                // 차트 트레이스 추가
-                traces.push({
-                    x: stData.map(d => String(d['YW - Year Week'])), 
-                    y: stData.map(d => parseFloat(d['OSA'])),
-                    type: 'scatter', mode: 'lines+markers', name: st
-                });
+                if (stData.length > 0) {
+                    traces.push({
+                        x: stData.map(d => String(d['YW - Year Week'])), 
+                        y: stData.map(d => parseFloat(d['OSA'])),
+                        type: 'scatter', mode: 'lines+markers', name: st
+                    });
 
-                // 테이블 행 구성 (주차별로 매핑)
-                let rowData = [st];
-                weeks.forEach(w => {
-                    let match = stData.find(d => String(d['YW - Year Week']) === w);
-                    rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
-                });
-                rows.push(rowData);
+                    let rowData = [st];
+                    weeks.forEach(w => {
+                        let match = stData.find(d => String(d['YW - Year Week']) === w);
+                        rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
+                    });
+                    rows.push(rowData);
+                }
             });
 
             Plotly.newPlot('chartDiv', traces, { 
                 title: 'All Stores - Weekly OSA Trend', 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.1%', range: [0.8, 1.05] }, margin: { t: 40, b: 40 }
+                xaxis: { type: 'category', title: 'Year-Week' }, 
+                yaxis: { tickformat: '.1%', range: [0.8, 1.05], title: 'OSA' }, margin: { t: 40, b: 40 }
             });
 
             drawTable(['Store'].concat(weeks), rows);
         }
 
-        // 2. 스토어 내 모든 HFB 벤치마킹
+        // 2. 스토어 내 모든 HFB 벤치마킹 (기간 필터 적용)
         function renderHFBData(store) {
-            let validData = excelData.HFB.filter(d => d['BU - Business Unit'] === store && d['OSA'] !== "" && !isNaN(parseFloat(d['OSA'])));
+            let validData = filterByTime(excelData.HFB).filter(d => d['BU - Business Unit'] === store);
             let weeks = [...new Set(validData.map(d => String(d['YW - Year Week'])))].sort();
             let hfbs = [...new Set(validData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
 
@@ -196,30 +239,32 @@
             hfbs.forEach(hfb => {
                 let hData = validData.filter(d => d['HFB Name - Home Furnishing Business Name'] === hfb).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
                 
-                traces.push({
-                    x: hData.map(d => String(d['YW - Year Week'])), 
-                    y: hData.map(d => parseFloat(d['OSA'])),
-                    type: 'scatter', mode: 'lines+markers', name: hfb
-                });
+                if (hData.length > 0) {
+                    traces.push({
+                        x: hData.map(d => String(d['YW - Year Week'])), 
+                        y: hData.map(d => parseFloat(d['OSA'])),
+                        type: 'scatter', mode: 'lines+markers', name: hfb
+                    });
 
-                let rowData = [hfb];
-                weeks.forEach(w => {
-                    let match = hData.find(d => String(d['YW - Year Week']) === w);
-                    rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
-                });
-                rows.push(rowData);
+                    let rowData = [hfb];
+                    weeks.forEach(w => {
+                        let match = hData.find(d => String(d['YW - Year Week']) === w);
+                        rowData.push(match ? (parseFloat(match['OSA']) * 100).toFixed(1) + '%' : '-');
+                    });
+                    rows.push(rowData);
+                }
             });
 
             Plotly.newPlot('chartDiv', traces, { 
                 title: `All HFBs in ${store} - OSA Trend`, 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.1%', range: [0.7, 1.05] } 
+                xaxis: { type: 'category', title: 'Year-Week' }, 
+                yaxis: { tickformat: '.1%', range: [0.7, 1.05], title: 'OSA' }, margin: { t: 40, b: 40 }
             });
 
             drawTable(['HFB Name'].concat(weeks), rows);
         }
 
-        // 3. Article 검색 결과
+        // 3. Article 검색 결과 (기간 필터 적용)
         function renderArticleData(store) {
             const itemNo = document.getElementById('articleInput').value.trim();
             
@@ -229,13 +274,12 @@
                 return;
             }
             
-            let data = excelData.Article_level.filter(d => 
-                d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo &&
-                d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
+            let data = filterByTime(excelData.Article_level).filter(d => 
+                d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo
             ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
             
             if (data.length === 0) {
-                alert(`"${itemNo}" 에 해당하는 제품 데이터를 찾을 수 없습니다.\n스토어와 제품 번호를 다시 확인해주세요.`);
+                alert(`선택한 기간 내에 "${itemNo}" 제품의 데이터가 없습니다.`);
                 return;
             }
 
@@ -251,8 +295,8 @@
                 { x: weeks, y: isas, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} }
             ], { 
                 title: `Item: ${itemNo} (${artName}) - OSA vs ISA`, 
-                xaxis: { type: 'category' }, 
-                yaxis: { tickformat: '.0%', range: [0, 1.05] } 
+                xaxis: { type: 'category', title: 'Year-Week' }, 
+                yaxis: { tickformat: '.0%', range: [0, 1.05], title: 'Availability' } 
             });
 
             const headers = ['Metric'].concat(weeks);
