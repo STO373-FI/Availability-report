@@ -8,24 +8,23 @@
     <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
-        /* 사이드바 스타일 (Goods arrival 폼 참고) */
         .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; }
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; }
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
         .sidebar select { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; }
         
-        /* 메인 화면 스타일 */
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 20px; color: #003399; }
         
-        /* 카드(컨테이너) 스타일 */
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         
-        /* 테이블 스타일 */
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; text-align: center; }
-        th, td { padding: 12px; border: 1px solid #ddd; }
+        /* 피벗된 테이블은 가로로 길어질 수 있으므로 스크롤 처리 */
+        .table-container { overflow-x: auto; white-space: nowrap; }
+        table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; }
+        th, td { padding: 10px 15px; border: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #333; font-weight: bold; }
-        tr:nth-child(even) { background-color: #f9f9f9; }
+        /* 첫 번째 열(이름/지표) 강조 및 고정 효과 부여 가능 */
+        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; }
         
         #loading { color: #d9534f; font-weight: bold; font-size: 16px; margin-bottom: 20px; }
     </style>
@@ -69,7 +68,7 @@
             
             <div class="card">
                 <h3 style="margin-top:0; color:#333; font-size:18px;">Data Details</h3>
-                <div style="overflow-x:auto;">
+                <div class="table-container">
                     <table id="dataTable">
                         <thead><tr id="tableHead"></tr></thead>
                         <tbody id="tableBody"></tbody>
@@ -82,7 +81,6 @@
     <script>
         let excelData = {}; 
 
-        // 1. 엑셀 파일 로드 (SheetJS)
         async function loadExcelFile() {
             try {
                 const response = await fetch('./FY26 OSA.xlsx');
@@ -101,7 +99,6 @@
                     });
                 };
 
-                // 필요한 시트 추출
                 excelData.STO_OSA = getSheetData('STO_OSA');
                 excelData.HFB = getSheetData('HFB');
                 excelData.Article_level = getSheetData('Article_level');
@@ -116,17 +113,13 @@
             }
         }
 
-        // 2. 필터 초기화
         function initFilters() {
-            // Store 필터 세팅 (STO373을 기본으로 선택하도록 유도)
             const stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
             const storeSelect = document.getElementById('storeSelect');
             storeSelect.innerHTML = stores.map(s => `<option value="${s}" ${s.includes('373') ? 'selected' : ''}>${s}</option>`).join('');
-            
             updateView();
         }
 
-        // 3. 뷰 업데이트 로직 (선택 레벨에 따라 UI 및 데이터 변경)
         function updateView() {
             const level = document.getElementById('viewLevel').value;
             const store = document.getElementById('storeSelect').value;
@@ -137,13 +130,11 @@
             if (level === 'store') {
                 document.getElementById('mainTitle').innerText = `1. Store Overview (${store})`;
                 renderStoreData(store);
-            } 
-            else if (level === 'hfb') {
+            } else if (level === 'hfb') {
                 document.getElementById('mainTitle').innerText = `2. HFB Level (${store})`;
                 updateHFBDropdown(store);
                 renderHFBData(store);
-            } 
-            else if (level === 'article') {
+            } else if (level === 'article') {
                 document.getElementById('mainTitle').innerText = `3. Article Level (${store})`;
                 updateHFBDropdown(store); 
                 updateArticleDropdown(store);
@@ -151,7 +142,6 @@
             }
         }
 
-        // --- 드롭다운 업데이트 함수 ---
         function updateHFBDropdown(store) {
             const hfbSelect = document.getElementById('hfbSelect');
             const currentVal = hfbSelect.value;
@@ -163,66 +153,93 @@
         function updateArticleDropdown(store) {
             const hfb = document.getElementById('hfbSelect').value;
             const articleSelect = document.getElementById('articleSelect');
-            // HFB 이름에서 번호 추출 로직이 필요할 수 있으나, 일단 전체 제품명 표시
             const rawArticles = excelData.Article_level.filter(d => d['BU - Business Unit'] === store);
             const articles = [...new Set(rawArticles.map(d => d['Item Number'] + " - " + d['artname']))].sort();
             articleSelect.innerHTML = articles.map(a => `<option value="${a.split(' - ')[0]}">${a}</option>`).join('');
         }
 
-        // --- 렌더링: 1. Store ---
+        // --- 렌더링 로직 (X축 문자로 강제, 빈 데이터 제거, 테이블 피벗) ---
+
         function renderStoreData(store) {
-            let data = excelData.STO_OSA.filter(d => d['BU - Business Unit'] === store).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
+            // 빈 데이터(미래 예측분 등) 제거 필터링 추가
+            let data = excelData.STO_OSA.filter(d => 
+                d['BU - Business Unit'] === store && d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
+            ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
             
-            // 차트 그리기
+            const weeks = data.map(d => String(d['YW - Year Week'])); // X축 강제 문자화
+            const osas = data.map(d => parseFloat(d['OSA']));
+
             Plotly.newPlot('chartDiv', [{
-                x: data.map(d => d['YW - Year Week']), y: data.map(d => parseFloat(d['OSA'])),
+                x: weeks, y: osas,
                 type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3', width: 3}
             }], { 
-                title: 'Weekly OSA Trend', yaxis: { tickformat: '.1%', range: [0.8, 1.05] }, margin: { t: 40, b: 40 }
+                title: 'Weekly OSA Trend', 
+                xaxis: { type: 'category' }, // Category 속성 추가하여 2025.3k 방지
+                yaxis: { tickformat: '.1%', range: [0.8, 1.05] }, margin: { t: 40, b: 40 }
             });
 
-            // 테이블 그리기
-            drawTable(
-                ['Year-Week', 'Store', 'OSA %'], 
-                data.map(d => [d['YW - Year Week'], d['BU - Business Unit'], (parseFloat(d['OSA']) * 100).toFixed(2) + '%'])
-            );
+            // 테이블 피벗: 열 이름은 Store + 주차들
+            const headers = ['Store'].concat(weeks);
+            const rowData = [store].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
+            drawTable(headers, [rowData]);
         }
 
-        // --- 렌더링: 2. HFB ---
         function renderHFBData(store) {
             const hfb = document.getElementById('hfbSelect').value;
             if(!hfb) return;
-            let data = excelData.HFB.filter(d => d['BU - Business Unit'] === store && d['HFB Name - Home Furnishing Business Name'] === hfb).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
             
-            Plotly.newPlot('chartDiv', [{
-                x: data.map(d => d['YW - Year Week']), y: data.map(d => parseFloat(d['OSA'])),
-                type: 'scatter', mode: 'lines+markers', line: {color: '#e00751', width: 3}
-            }], { title: `${hfb} - OSA Trend`, yaxis: { tickformat: '.1%', range: [0.7, 1.05] } });
+            let data = excelData.HFB.filter(d => 
+                d['BU - Business Unit'] === store && d['HFB Name - Home Furnishing Business Name'] === hfb && 
+                d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
+            ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
+            
+            const weeks = data.map(d => String(d['YW - Year Week']));
+            const osas = data.map(d => parseFloat(d['OSA']));
 
-            drawTable(
-                ['Year-Week', 'HFB Name', 'OSA %'], 
-                data.map(d => [d['YW - Year Week'], d['HFB Name - Home Furnishing Business Name'], (parseFloat(d['OSA']) * 100).toFixed(2) + '%'])
-            );
+            Plotly.newPlot('chartDiv', [{
+                x: weeks, y: osas,
+                type: 'scatter', mode: 'lines+markers', line: {color: '#e00751', width: 3}
+            }], { 
+                title: `${hfb} - OSA Trend`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.1%', range: [0.7, 1.05] } 
+            });
+
+            const headers = ['HFB Name'].concat(weeks);
+            const rowData = [hfb].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
+            drawTable(headers, [rowData]);
         }
 
-        // --- 렌더링: 3. Article ---
         function renderArticleData(store) {
             const itemNo = document.getElementById('articleSelect').value;
             if(!itemNo) return;
-            let data = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
             
-            Plotly.newPlot('chartDiv', [
-                { x: data.map(d => d['YW - Year Week']), y: data.map(d => parseFloat(d['OSA'])), type: 'scatter', mode: 'lines+markers', name: 'OSA' },
-                { x: data.map(d => d['YW - Year Week']), y: data.map(d => parseFloat(d['ISA'])), type: 'scatter', mode: 'lines+markers', name: 'ISA' }
-            ], { title: `Item ${itemNo} - OSA vs ISA`, yaxis: { tickformat: '.0%', range: [0, 1.05] } });
+            let data = excelData.Article_level.filter(d => 
+                d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo &&
+                d['OSA'] !== "" && !isNaN(parseFloat(d['OSA']))
+            ).sort((a,b) => a['YW - Year Week'] - b['YW - Year Week']);
+            
+            const weeks = data.map(d => String(d['YW - Year Week']));
+            const osas = data.map(d => parseFloat(d['OSA']));
+            const isas = data.map(d => parseFloat(d['ISA']));
 
-            drawTable(
-                ['Year-Week', 'Item Number', 'Article Name', 'OSA %', 'ISA %'], 
-                data.map(d => [d['YW - Year Week'], d['Item Number'], d['artname'], (parseFloat(d['OSA']) * 100).toFixed(1) + '%', (parseFloat(d['ISA']) * 100).toFixed(1) + '%'])
-            );
+            Plotly.newPlot('chartDiv', [
+                { x: weeks, y: osas, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: {color: '#0058a3'} },
+                { x: weeks, y: isas, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} }
+            ], { 
+                title: `Item ${itemNo} - OSA vs ISA`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.0%', range: [0, 1.05] } 
+            });
+
+            const headers = ['Metric'].concat(weeks);
+            // Article 레벨은 OSA, ISA 두 줄로 표시
+            const osaRow = ['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
+            const isaRow = ['ISA %'].concat(isas.map(v => (v * 100).toFixed(1) + '%'));
+            
+            drawTable(headers, [osaRow, isaRow]);
         }
 
-        // --- 공통 테이블 그리기 함수 ---
         function drawTable(headers, rows) {
             document.getElementById('tableHead').innerHTML = headers.map(h => `<th>${h}</th>`).join('');
             document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('');
