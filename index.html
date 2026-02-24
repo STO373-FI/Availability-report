@@ -9,7 +9,11 @@
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
         .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; z-index: 10; }
-        .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; }
+        
+        /* 🌟 제목 클릭 효과 CSS 추가 */
+        .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; cursor: pointer; transition: opacity 0.2s; }
+        .sidebar h2:hover { opacity: 0.8; }
+        
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
         .sidebar select, .sidebar input, .sidebar button { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; box-sizing: border-box; }
         .sidebar button { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
@@ -45,7 +49,7 @@
 <body>
 
     <div class="sidebar">
-        <h2>📊 Availability Report</h2>
+        <h2 onclick="window.location.reload();" title="홈페이지로 돌아가기">📊 Availability Report</h2>
         
         <label>1. View Level</label>
         <select id="viewLevel" onchange="updateView()">
@@ -106,7 +110,6 @@
         let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
 
-        // --- 🛡️ 10000% 방지 철벽 방어 로직 ---
         function cleanData(dataArray, columnsToClean) {
             dataArray.forEach(row => {
                 columnsToClean.forEach(col => {
@@ -206,7 +209,6 @@
             let y = parseInt(lastActualWeek.substring(0,4));
             let w = parseInt(lastActualWeek.substring(4,6));
             
-            // 🌟 향후 6주까지만 생성되도록 변경 (12 -> 6)
             for(let i=1; i<=6; i++) {
                 w++; if(w > 52) { y++; w = 1; }
                 projectionData.weeks.push(y + (w < 10 ? '0'+w : ''+w));
