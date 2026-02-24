@@ -210,12 +210,11 @@
             }
         }
 
-        // --- 🌟 컨테이너 시뮬레이터 (하루 5대, HF/DD Trade-off 완벽 적용) ---
         function runContainerSimulation() {
             csmToSimulatedWeek = {};
             let containers = {}; 
             
-            let simDate = new Date(); // 오늘부터 시뮬레이션 시작
+            let simDate = new Date(); 
             simDate.setHours(0,0,0,0);
 
             let fixedByDate = {}; 
@@ -255,7 +254,6 @@
             
             for(let cntr in containers) {
                 let c = containers[cntr];
-                // 미래 확정일(오늘 이후)이 있는 경우만 CAPA 선점으로 간주
                 if(c.fixedDate && c.fixedDate >= simDate) {
                     let dStr = c.fixedDate.toISOString().split('T')[0];
                     if(!fixedByDate[dStr]) fixedByDate[dStr] = { LF: 0, DD: 0, HF: 0 };
@@ -267,17 +265,14 @@
                     let fw = getYearWeek(c.fixedDate);
                     c.csmList.forEach(csm => csmToSimulatedWeek[csm] = fw);
                 } else {
-                    // 과거에 멈춰있거나 미확정인 건 무조건 대기열(Queue)로 편입
                     queuedContainers.push(c);
                 }
             }
 
-            // 대기열 정렬: 먼저 포트에 온 놈이 장땡 (FIFO)
             queuedContainers.sort((a, b) => a.arrivalDate - b.arrivalDate);
             
             let qIndex = 0;
             
-            // 향후 최대 90일까지만 시뮬레이션
             while(qIndex < queuedContainers.length && simDate.getTime() < Date.now() + 90*86400000) {
                 
                 let dStr = simDate.toISOString().split('T')[0];
@@ -290,7 +285,6 @@
 
                 let scheduledToday = [];
 
-                // 🌟 1차 배정 (기본 쿼터: LF 1대, HF 1대, DD 3대)
                 for(let i = qIndex; i < queuedContainers.length; i++) {
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
@@ -305,7 +299,6 @@
                     }
                 }
 
-                // 🌟 2차 배정 (빈자리 보완 1순위: HF 끌어오기)
                 for(let i = qIndex; i < queuedContainers.length; i++) {
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
@@ -316,7 +309,6 @@
                     }
                 }
 
-                // 🌟 3차 배정 (빈자리 보완 2순위: DD 끌어오기)
                 for(let i = qIndex; i < queuedContainers.length; i++) {
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
@@ -327,16 +319,13 @@
                     }
                 }
 
-                // 오늘 처리된 컨테이너에 시뮬레이션 주차 할당
                 let currentSimWeek = getYearWeek(simDate);
                 scheduledToday.forEach(c => {
                     c.csmList.forEach(csm => csmToSimulatedWeek[csm] = currentSimWeek);
                 });
 
-                // 하루 넘기기
                 simDate.setDate(simDate.getDate() + 1);
                 
-                // 큐에서 이미 처리된 애들은 건너뛰기
                 while(qIndex < queuedContainers.length && queuedContainers[qIndex].scheduled) {
                     qIndex++;
                 }
@@ -370,17 +359,14 @@
                 let targetWk = null;
 
                 if(csmId && csmToSimulatedWeek[csmId]) {
-                    // 컨테이너는 시뮬레이터가 배정한 주차(하루 5대 캡 적용)를 사용
                     targetWk = csmToSimulatedWeek[csmId];
                 } 
                 else {
-                    // 컨테이너가 아닌 일반 화물(국내 등)은 포트 CAPA의 제약을 받지 않으므로 개별 날짜 사용
                     let mDate = parseExcelDate(row['Planned Receiving Date']);
                     let uDate = parseExcelDate(row['LatestRcvDate']);
                     if(mDate) targetWk = getYearWeek(mDate, 0);       
                     else if(uDate) targetWk = getYearWeek(uDate, 7);  
                     
-                    // 일반 화물인데 과거로 남아있는 것은 가장 빠른 이번 주(WK09)로 이월(Roll-over)
                     if(targetWk && targetWk <= lastActualWeek) {
                         targetWk = firstProjWeek;
                     }
@@ -393,6 +379,12 @@
             });
 
             excelData.AL010.forEach(row => {
+                // 🌟 핵심: SL 값이 1~4 인 활성 제품만 취급 (유령/단종 제품 완벽 컷오프)
+                let slValue = parseInt(row['SL']);
+                if (isNaN(slValue) || slValue < 1 || slValue > 4) {
+                    return; 
+                }
+
                 let storeId = String(row['MHS_ID']); 
                 let itemNo = normArt(row['ARTNO']);
                 let hfb = String(row['HFB']);
