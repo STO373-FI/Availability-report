@@ -13,8 +13,10 @@
         .sidebar h2:hover { opacity: 0.8; }
         .sidebar label { display: block; margin-top: 15px; font-weight: bold; font-size: 14px; color: #ffd100; }
         .sidebar select, .sidebar input, .sidebar button { width: 100%; padding: 10px; margin-top: 5px; border-radius: 4px; border: none; background-color: white; color: #333; font-weight: bold; box-sizing: border-box; }
-        .sidebar button { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
-        .sidebar button:hover { background-color: #ffd633; }
+        .sidebar button.primary { background-color: #ffcc00; color: #003399; cursor: pointer; margin-top: 10px; }
+        .sidebar button.primary:hover { background-color: #ffd633; }
+        .sidebar button.danger { background-color: #e74c3c; color: white; cursor: pointer; margin-top: 30px; border: 1px solid #c0392b; }
+        .sidebar button.danger:hover { background-color: #c0392b; }
         
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
@@ -68,8 +70,10 @@
         <div id="articleFilter" style="display: none;">
             <label>3. Search Article</label>
             <input type="text" id="articleInput" placeholder="ex) 00546468" onkeypress="handleEnter(event)">
-            <button onclick="updateView()">🔍 Search</button>
+            <button class="primary" onclick="updateView()">🔍 Search</button>
         </div>
+
+        <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
     </div>
 
     <div class="main-content">
@@ -78,7 +82,7 @@
         
         <div id="loading">
             <div class="spinner"></div>
-            <span id="loadingText">데이터를 준비 중입니다. 잠시만 기다려주세요...</span>
+            <span id="loadingText">데이터를 확인 중입니다. 잠시만 기다려주세요...</span>
         </div>
         
         <div id="dashboard" style="display: none;">
@@ -104,10 +108,49 @@
         let lastActualWeek = "";
         let csmToSimulatedWeek = {}; 
 
+        // --- 🌟 IndexedDB 캐싱 시스템 구축 ---
+        const DB_NAME = "OsaDashboardDB";
+        const STORE_NAME = "cache";
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                let req = indexedDB.open(DB_NAME, 1);
+                req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
+                req.onsuccess = e => resolve(e.target.result);
+                req.onerror = e => reject(e);
+            });
+        }
+
+        function getDB(db, key) {
+            return new Promise((resolve) => {
+                let tx = db.transaction(STORE_NAME, 'readonly');
+                let req = tx.objectStore(STORE_NAME).get(key);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => resolve(null);
+            });
+        }
+
+        function putDB(db, key, val) {
+            return new Promise((resolve, reject) => {
+                let tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).put(val, key);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject();
+            });
+        }
+
+        async function forceRefreshCache() {
+            if(confirm("저장된 엑셀 캐시를 삭제하고 파일을 다시 다운로드하시겠습니까?\n(약 5~10초 소요)")) {
+                let db = await openDB();
+                let tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).clear();
+                tx.oncomplete = () => window.location.reload();
+            }
+        }
+
         function updateLoadingStatus(msg) {
             let el = document.getElementById('loadingText');
             if (el) el.innerText = msg;
-            console.log(msg);
         }
 
         function normArt(val) {
@@ -149,12 +192,11 @@
         }
 
         function parseExcelDate(val) {
-            if (val === undefined || val === null || val === "") return null;
+            if (!val) return null;
             if (val instanceof Date) return val;
             if (typeof val === 'number') {
-                // 엑셀 고유 숫자형 날짜 파싱 (타임존 문제 보정 적용)
                 let d = new Date(Math.round((val - 25569) * 86400 * 1000));
-                d.setMinutes(d.getMinutes() + d.getTimezoneOffset()); 
+                d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
                 return d;
             }
             if (typeof val === 'string') {
@@ -173,63 +215,88 @@
             }) : [];
         };
 
-        // 🌟 브라우저 프리징 방지를 위한 5단계 비동기 데이터 로딩 엔진
+        // --- 🌟 데이터 로드 메인 (캐시 검증 포함) ---
         async function loadExcelFiles() {
             try {
-                updateLoadingStatus("1/5: 서버에서 엑셀 파일(FY26 OSA, Order)을 다운로드하고 있습니다...");
+                let db = await openDB();
                 
-                const [res1, res2] = await Promise.all([
-                    fetch('./FY26 OSA.xlsx'),
-                    fetch('./Order.xlsx')
-                ]);
+                // 파일 업데이트 여부 확인 (HEAD 요청)
+                let osaMod = 'unknown1', ordMod = 'unknown2';
+                try {
+                    let h1 = await fetch('./FY26 OSA.xlsx', {method: 'HEAD'});
+                    osaMod = h1.headers.get('Last-Modified') || h1.headers.get('ETag') || '1';
+                    let h2 = await fetch('./Order.xlsx', {method: 'HEAD'});
+                    ordMod = h2.headers.get('Last-Modified') || h2.headers.get('ETag') || '2';
+                } catch(e) { console.warn("Local env header check skipped."); }
 
-                if (!res1.ok) throw new Error("'FY26 OSA.xlsx' 파일을 찾을 수 없습니다.");
-                if (!res2.ok) throw new Error("'Order.xlsx' 파일을 찾을 수 없습니다.");
+                let cachedOsaMod = await getDB(db, 'osa_mod');
+                let cachedOrdMod = await getDB(db, 'ord_mod');
 
+                // 🌟 캐시 매칭 시 초고속 로딩
+                if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
+                    updateLoadingStatus("저장된 캐시 데이터를 불러옵니다. (초고속 로딩 ⚡)");
+                    excelData.STO_OSA = await getDB(db, 'STO_OSA');
+                    excelData.HFB = await getDB(db, 'HFB');
+                    excelData.Article_level = await getDB(db, 'Article_level');
+                    excelData.AL010 = await getDB(db, 'AL010');
+                    excelData.Table7 = await getDB(db, 'Table7');
+                    excelData.SHP = await getDB(db, 'SHP');
+
+                    if (excelData.STO_OSA && excelData.AL010) {
+                        runContainerSimulation(); 
+                        calculateProjections();   
+                        initFilters();
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('dashboard').style.display = 'block';
+                        return;
+                    }
+                }
+
+                // 🌟 캐시 불일치 시 새로 다운로드 & 분석 (UI 프리징 방지를 위한 await 분할)
+                updateLoadingStatus("1/5: 새 엑셀 파일을 다운로드 중입니다...");
+                const [res1, res2] = await Promise.all([ fetch('./FY26 OSA.xlsx'), fetch('./Order.xlsx') ]);
                 const ab1 = await res1.arrayBuffer();
                 const ab2 = await res2.arrayBuffer();
 
                 updateLoadingStatus("2/5: 과거 실적(FY26 OSA) 데이터를 분석 중입니다...");
-                await new Promise(r => setTimeout(r, 50)); // 브라우저 숨쉬기(UI 업데이트) 시간 허용
-                
-                // 메모리 절약을 위해 cellDates: true 옵션 제거, raw 파싱 후 수동 파싱 처리
+                await new Promise(r => setTimeout(r, 50)); 
                 const wb1 = XLSX.read(ab1, { type: 'array' });
                 excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
                 excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
                 excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA', 'ISA']);
 
-                updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (데이터가 커서 약 5~10초 소요됩니다)");
+                updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (약 5초 소요)");
                 await new Promise(r => setTimeout(r, 50));
-                
                 const wb2 = XLSX.read(ab2, { type: 'array' });
                 excelData.AL010 = getSheetData(wb2, 'AL010');
                 excelData.Table7 = getSheetData(wb2, 'Table_7_Final');
 
                 let shpSheetName = wb2.SheetNames[3]; 
-                if(!shpSheetName) throw new Error("Order 파일에 4번째 시트(SHP)가 없습니다.");
                 let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
                 excelData.SHP = rawShpData.slice(1); 
 
-                if(excelData.AL010.length === 0 || excelData.Table7.length === 0) {
-                     throw new Error("'Order.xlsx' 파일 내에 필수 시트(AL010, Table_7_Final)가 없습니다.");
-                }
+                // DB 저장
+                updateLoadingStatus("4/5: 데이터를 캐시에 저장 중입니다...");
+                await putDB(db, 'osa_mod', osaMod);
+                await putDB(db, 'ord_mod', ordMod);
+                await putDB(db, 'STO_OSA', excelData.STO_OSA);
+                await putDB(db, 'HFB', excelData.HFB);
+                await putDB(db, 'Article_level', excelData.Article_level);
+                await putDB(db, 'AL010', excelData.AL010);
+                await putDB(db, 'Table7', excelData.Table7);
+                await putDB(db, 'SHP', excelData.SHP);
 
-                updateLoadingStatus("4/5: 일일 하역 CAPA(하루 5대 룰) 시뮬레이터를 가동 중입니다...");
+                updateLoadingStatus("5/5: 일일 하역 CAPA 시뮬레이터를 가동 중입니다...");
                 await new Promise(r => setTimeout(r, 50));
                 runContainerSimulation(); 
-
-                updateLoadingStatus("5/5: 유령 제품 필터링 및 향후 가용성(Projection)을 예측 중입니다...");
-                await new Promise(r => setTimeout(r, 50));
                 calculateProjections();   
                 initFilters();
                 
-                // 완료 후 화면 전환
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('dashboard').style.display = 'block';
 
             } catch (error) {
-                // 에러 발생 시 숨김 처리 없이 에러 메세지를 띄워 원인 파악 가능하게 함
-                document.getElementById('loading').innerHTML = `<span style="color:red; font-size:16px;">❌ 연산 오류 발생: ${error.message}<br>파일 형식이 올바른지 확인해주세요.</span>`;
+                document.getElementById('loading').innerHTML = `<span style="color:red; font-size:16px;">❌ 오류: ${error.message}</span>`;
                 console.error(error);
             }
         }
@@ -294,11 +361,9 @@
             }
 
             queuedContainers.sort((a, b) => a.arrivalDate - b.arrivalDate);
-            
             let qIndex = 0;
             
             while(qIndex < queuedContainers.length && simDate.getTime() < Date.now() + 90*86400000) {
-                
                 let dStr = simDate.toISOString().split('T')[0];
                 let daily = fixedByDate[dStr] || { LF: 0, DD: 0, HF: 0 };
                 
@@ -327,39 +392,30 @@
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
-                    if(c.type === 'HF') {
-                        c.scheduled = true; totalDaily++; scheduledToday.push(c);
-                    }
+                    if(c.type === 'HF') { c.scheduled = true; totalDaily++; scheduledToday.push(c); }
                 }
 
                 for(let i = qIndex; i < queuedContainers.length; i++) {
                     if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
-                    if(c.type === 'DD') {
-                        c.scheduled = true; totalDaily++; scheduledToday.push(c);
-                    }
+                    if(c.type === 'DD') { c.scheduled = true; totalDaily++; scheduledToday.push(c); }
                 }
                 
-                // 알 수 없는 화물 타입도 무한 대기열 방지를 위해 강제 배출 처리
                 for(let i = qIndex; i < queuedContainers.length; i++) {
+                    if(totalDaily >= 5) break;
                     let c = queuedContainers[i];
                     if(c.scheduled) continue;
                     if(c.type !== 'LF' && c.type !== 'DD' && c.type !== 'HF') {
-                        c.scheduled = true; scheduledToday.push(c);
+                        c.scheduled = true; totalDaily++; scheduledToday.push(c);
                     }
                 }
 
                 let currentSimWeek = getYearWeek(simDate);
-                scheduledToday.forEach(c => {
-                    c.csmList.forEach(csm => csmToSimulatedWeek[csm] = currentSimWeek);
-                });
+                scheduledToday.forEach(c => c.csmList.forEach(csm => csmToSimulatedWeek[csm] = currentSimWeek));
 
                 simDate.setDate(simDate.getDate() + 1);
-                
-                while(qIndex < queuedContainers.length && queuedContainers[qIndex].scheduled) {
-                    qIndex++;
-                }
+                while(qIndex < queuedContainers.length && queuedContainers[qIndex].scheduled) qIndex++;
             }
         }
 
@@ -368,7 +424,18 @@
 
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
             lastActualWeek = allWeeks[allWeeks.length - 1]; 
-            if (!lastActualWeek) throw new Error("과거 실적 YW 데이터를 찾을 수 없습니다.");
+            
+            // 🌟 이중 방어 필터: "마지막 실적 주차(WK08)에 실제로 관리된 품목 리스트"를 추출합니다. (유령 데이터 방지)
+            let activeStoreArticles = {};
+            excelData.Article_level.forEach(d => {
+                let wk = String(d['YW - Year Week']);
+                if (wk === lastActualWeek) {
+                    let storeId = String(d['BU - Business Unit']).split(' - ')[0];
+                    let itemNo = normArt(d['Item Number']);
+                    if (!activeStoreArticles[storeId]) activeStoreArticles[storeId] = new Set();
+                    activeStoreArticles[storeId].add(itemNo);
+                }
+            });
             
             let y = parseInt(lastActualWeek.substring(0,4));
             let w = parseInt(lastActualWeek.substring(4,6));
@@ -410,19 +477,22 @@
                 }
             });
 
-            // 요일 비례 보정(Proration)을 위한 처리 (오늘 화요일 기준 등)
+            // 🌟 주중 스냅샷 보정 로직
             let todayDay = new Date().getDay(); 
-            let elapsedDays = todayDay === 0 ? 7 : todayDay; 
-            let remainDays = 7 - elapsedDays; 
+            let elapsedDays = todayDay === 0 ? 7 : todayDay; // 월=1, 화=2, ... 일=7
+            let remainDays = 7 - elapsedDays; // 수~일 = 5일
 
             excelData.AL010.forEach(row => {
                 let slValue = parseInt(row['SL']);
-                if (isNaN(slValue) || slValue < 1 || slValue > 4) {
-                    return; 
-                }
+                // 1. SL 1~4 필터 (취급 제외품목 컷오프)
+                if (isNaN(slValue) || slValue < 1 || slValue > 4) return; 
 
                 let storeId = String(row['MHS_ID']); 
                 let itemNo = normArt(row['ARTNO']);
+                
+                // 2. 이중 컷오프: 실제 관리대상 품목(WK08)에 없는 1,442개의 유령 데이터 버리기
+                if (!activeStoreArticles[storeId] || !activeStoreArticles[storeId].has(itemNo)) return;
+
                 let hfb = String(row['HFB']);
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
@@ -441,6 +511,7 @@
                     let osa = 0;
                     let salesToDeduct = avgSales;
 
+                    // 첫 주차(WK09)는 남은 요일 비율만큼만 판매 차감 및 OSA 보정
                     if (index === 0) {
                         salesToDeduct = avgSales * (remainDays / 7); 
                         
@@ -452,6 +523,7 @@
                             else if(currentStock > 0) remainOsa = currentStock / salesToDeduct; 
                             else remainOsa = 0; 
                         }
+                        
                         osa = ((elapsedDays * 1) + (remainDays * remainOsa)) / 7;
                     } 
                     else {
