@@ -10,7 +10,6 @@
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f3f4f6; display: flex; color: #333; }
         .sidebar { width: 260px; background-color: #003399; color: white; padding: 20px; height: 100vh; position: fixed; box-sizing: border-box; overflow-y: auto; z-index: 10; }
         
-        /* 🌟 제목 클릭 효과 CSS 추가 */
         .sidebar h2 { font-size: 20px; margin-bottom: 30px; border-bottom: 2px solid #ffcc00; padding-bottom: 10px; cursor: pointer; transition: opacity 0.2s; }
         .sidebar h2:hover { opacity: 0.8; }
         
@@ -74,7 +73,7 @@
 
         <div id="articleFilter" style="display: none;">
             <label>3. Search Article</label>
-            <input type="text" id="articleInput" placeholder="ex) 157717" onkeypress="handleEnter(event)">
+            <input type="text" id="articleInput" placeholder="ex) 00546468" onkeypress="handleEnter(event)">
             <button onclick="updateView()">🔍 Search</button>
         </div>
     </div>
@@ -110,6 +109,18 @@
         let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
 
+        // --- 🌟 제품 번호 앞의 0을 제거하여 고유 번호로 정규화하는 함수 ---
+        function normArt(val) {
+            if (val === undefined || val === null) return "";
+            let str = String(val).trim();
+            // 숫자만 있는 문자열일 경우, 정수로 변환 후 다시 문자열로 바꿔 앞의 0을 날림 (예: "00546468" -> "546468")
+            if (/^\d+$/.test(str)) {
+                return parseInt(str, 10).toString();
+            }
+            return str;
+        }
+
+        // --- 🛡️ 10000% 방지 철벽 방어 로직 ---
         function cleanData(dataArray, columnsToClean) {
             dataArray.forEach(row => {
                 columnsToClean.forEach(col => {
@@ -216,7 +227,7 @@
 
             let incoming = {};
             excelData.Table7.forEach(row => {
-                let itemNo = String(row['ItemNo']);
+                let itemNo = normArt(row['ItemNo']); // 🌟 정규화
                 let mDate = parseExcelDate(row['Planned Receiving Date']);
                 let uDate = parseExcelDate(row['LatestRcvDate']);
                 let qty = parseFloat(row['LatestQty']) || 0;
@@ -238,7 +249,7 @@
 
             excelData.AL010.forEach(row => {
                 let storeId = String(row['MHS_ID']); 
-                let itemNo = String(row['ARTNO']);
+                let itemNo = normArt(row['ARTNO']); // 🌟 정규화
                 let hfb = String(row['HFB']);
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
@@ -446,18 +457,22 @@
         }
 
         function renderArticleData(store) {
-            const itemNo = document.getElementById('articleInput').value.trim();
+            // 🌟 검색창에 입력한 값도 정규화
+            const rawItemNo = document.getElementById('articleInput').value.trim();
+            const itemNo = normArt(rawItemNo);
+            
             if(!itemNo) { Plotly.newPlot('chartDiv', []); drawTable([], []); return; }
             
             let storeCode = store.split(' - ')[0];
-            let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && String(d['Item Number']) === itemNo);
+            // 🌟 원본 데이터와 입력값 모두 정규화하여 매칭
+            let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
             
             let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
                 if(projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) return projectionData.article[storeCode][itemNo];
                 return null;
             });
 
-            if (weeks.length === 0) { alert(`해당 기간에 "${itemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
+            if (weeks.length === 0) { alert(`해당 기간에 "${rawItemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
 
             let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
             weeks.forEach((w, i) => {
@@ -483,7 +498,7 @@
             
             let isaRowData = ['ISA %'];
             weeks.forEach(w => {
-                let match = actuals.find(d => String(d['YW - Year Week']) === w);
+                let match = actuals.find(d => normArt(d['Item Number']) === itemNo && String(d['YW - Year Week']) === w);
                 isaRowData.push(match ? (parseFloat(match['ISA']) * 100).toFixed(1) + '%' : '-');
             });
             drawTable(['Metric'].concat(weeks), [['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%')), isaRowData], weeks.map(w => isProjMap[w]));
