@@ -18,6 +18,10 @@
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
         
+        .upload-section { margin-top: 30px; padding-top: 15px; border-top: 1px dashed #668cff; }
+        .upload-section input[type="file"] { background-color: transparent; color: white; padding: 0; font-size: 12px; margin-top: 10px; }
+        #fileStatus { font-size: 12px; color: #a3c2ff; margin-top: 5px; line-height: 1.4; }
+        
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
         .header-desc { font-size: 14px; color: #666; margin-bottom: 20px; }
@@ -110,13 +114,10 @@
                         let strVal = String(row[col]).replace(/[^0-9.-]/g, '');
                         let v = parseFloat(strVal);
                         if (!isNaN(v)) {
-                            // 값이 비정상적으로 클 경우(예: 95, 9450 등) 1 이하가 될 때까지 100으로 나눔
                             if (v > 10) { 
                                 while (v > 1.01) v = v / 100;
                             }
-                            // 1.05 같은 미세한 오차가 남을 수 있으므로 1 초과시 무조건 1(100%)로 고정
                             if (v > 1) v = 1;
-                            // 마이너스 값 방지
                             if (v < 0) v = 0;
                             
                             row[col] = v;
@@ -155,7 +156,6 @@
                 const res1 = await fetch('./FY26 OSA.xlsx');
                 if (!res1.ok) throw new Error("'FY26 OSA.xlsx' 파일을 찾을 수 없습니다.");
                 const ab1 = await res1.arrayBuffer();
-                // 날짜 객체 처리 및 원본 숫자 추출을 위해 cellDates, raw 옵션 활성화
                 const wb1 = XLSX.read(ab1, { type: 'array', cellDates: true });
 
                 const res2 = await fetch('./Order.xlsx');
@@ -163,7 +163,6 @@
                 const ab2 = await res2.arrayBuffer();
                 const wb2 = XLSX.read(ab2, { type: 'array', cellDates: true });
 
-                // raw: true를 사용하여 엑셀의 원본 숫자를 있는 그대로 가져옵니다.
                 const getSheetData = (wb, name) => {
                     const sheet = wb.Sheets[name];
                     return sheet ? XLSX.utils.sheet_to_json(sheet, { raw: true, defval: "" }).map(row => {
@@ -206,7 +205,9 @@
             
             let y = parseInt(lastActualWeek.substring(0,4));
             let w = parseInt(lastActualWeek.substring(4,6));
-            for(let i=1; i<=12; i++) {
+            
+            // 🌟 향후 6주까지만 생성되도록 변경 (12 -> 6)
+            for(let i=1; i<=6; i++) {
                 w++; if(w > 52) { y++; w = 1; }
                 projectionData.weeks.push(y + (w < 10 ? '0'+w : ''+w));
             }
@@ -391,7 +392,6 @@
                 }
             });
 
-            // 🌟 Y축의 최소값을 0으로 고정
             Plotly.newPlot('chartDiv', traces, { title: 'All Stores - Weekly OSA Trend', xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [0, 1.05] }, margin: { t: 40, b: 40 } });
             drawTable(['Store'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
@@ -439,7 +439,6 @@
                 }
             });
 
-            // 🌟 Y축의 최소값을 0으로 고정
             Plotly.newPlot('chartDiv', traces, { title: `All HFBs in ${store}`, xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [0, 1.05] }});
             drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
