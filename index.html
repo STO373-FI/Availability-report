@@ -80,7 +80,7 @@
 
     <div class="main-content">
         <div class="header-title" id="mainTitle">Store Overview</div>
-        <div class="header-desc" id="subTitle">우측 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다. (점선 및 노란색 표시는 미래 예측값입니다.)</div>
+        <div class="header-desc" id="subTitle">하단 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다. (점선 및 노란색 표시는 미래 예측값입니다.)</div>
         
         <div id="loading">
             <div class="spinner"></div>
@@ -109,18 +109,15 @@
         let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
 
-        // --- 🌟 제품 번호 앞의 0을 제거하여 고유 번호로 정규화하는 함수 ---
         function normArt(val) {
             if (val === undefined || val === null) return "";
             let str = String(val).trim();
-            // 숫자만 있는 문자열일 경우, 정수로 변환 후 다시 문자열로 바꿔 앞의 0을 날림 (예: "00546468" -> "546468")
             if (/^\d+$/.test(str)) {
                 return parseInt(str, 10).toString();
             }
             return str;
         }
 
-        // --- 🛡️ 10000% 방지 철벽 방어 로직 ---
         function cleanData(dataArray, columnsToClean) {
             dataArray.forEach(row => {
                 columnsToClean.forEach(col => {
@@ -227,7 +224,7 @@
 
             let incoming = {};
             excelData.Table7.forEach(row => {
-                let itemNo = normArt(row['ItemNo']); // 🌟 정규화
+                let itemNo = normArt(row['ItemNo']);
                 let mDate = parseExcelDate(row['Planned Receiving Date']);
                 let uDate = parseExcelDate(row['LatestRcvDate']);
                 let qty = parseFloat(row['LatestQty']) || 0;
@@ -249,7 +246,7 @@
 
             excelData.AL010.forEach(row => {
                 let storeId = String(row['MHS_ID']); 
-                let itemNo = normArt(row['ARTNO']); // 🌟 정규화
+                let itemNo = normArt(row['ARTNO']);
                 let hfb = String(row['HFB']);
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
@@ -326,12 +323,15 @@
 
             if (level === 'store') {
                 document.getElementById('mainTitle').innerText = `1. Store Overview (Benchmarking)`;
+                document.getElementById('subTitle').innerText = `모든 스토어의 데이터입니다. 하단 범례를 클릭하여 원하는 스토어만 비교해보세요.`;
                 renderStoreData();
             } else if (level === 'hfb') {
                 document.getElementById('mainTitle').innerText = `2. HFB Level (${store})`;
+                document.getElementById('subTitle').innerText = `해당 스토어의 모든 HFB 데이터입니다. 하단 범례를 클릭하여 원하는 HFB만 비교해보세요.`;
                 renderHFBData(store);
             } else if (level === 'article') {
                 document.getElementById('mainTitle').innerText = `3. Article Level (${store})`;
+                document.getElementById('subTitle').innerText = `좌측에서 제품 번호를 검색하세요. (예: 00546468)`;
                 renderArticleData(store);
             }
         }
@@ -368,6 +368,7 @@
         function renderStoreData() {
             let stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
             let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
+            let allY = []; // Y축 다이내믹 계산용 배열
 
             stores.forEach(st => {
                 let storeCode = st.split(' - ')[0]; 
@@ -390,6 +391,7 @@
                     
                     let actX=[], actY=[], projX=[], projY=[], lastActX=null, lastActY=null;
                     weeks.forEach((w, i) => {
+                        allY.push(osas[i]); // 데이터 수집
                         if(isProjMap[w]) {
                             if(projX.length===0 && lastActX) { projX.push(lastActX); projY.push(lastActY); }
                             projX.push(w); projY.push(osas[i]);
@@ -405,7 +407,18 @@
                 }
             });
 
-            Plotly.newPlot('chartDiv', traces, { title: 'All Stores - Weekly OSA Trend', xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [0, 1.05] }, margin: { t: 40, b: 40 } });
+            // 🌟 동적 Y축 범위 계산
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05); // 최소값에서 5% 여유 마진
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: 'All Stores - Weekly OSA Trend', 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] }, 
+                margin: { t: 40, b: 120 }, // 🌟 하단 여백 대폭 추가 (범례 공간)
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치 및 하단 이동
+            });
             drawTable(['Store'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
@@ -415,6 +428,7 @@
             let hfbs = [...new Set(actData.map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
             
             let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
+            let allY = []; // Y축 다이내믹 계산용 배열
 
             hfbs.forEach(hfb => {
                 let hfbNumStr = parseInt(hfb.split(' - ')[0]).toString(); 
@@ -437,6 +451,7 @@
                     
                     let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
                     weeks.forEach((w, i) => {
+                        allY.push(osas[i]); // 데이터 수집
                         if(isProjMap[w]) {
                             if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
                             projX.push(w); projY.push(osas[i]);
@@ -452,19 +467,28 @@
                 }
             });
 
-            Plotly.newPlot('chartDiv', traces, { title: `All HFBs in ${store}`, xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [0, 1.05] }});
+            // 🌟 동적 Y축 범위 계산
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05);
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: `All HFBs in ${store}`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.1%', range: [calculatedMin, 1.05] },
+                margin: { t: 40, b: 120 }, // 🌟 하단 여백 추가
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치
+            });
             drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
         function renderArticleData(store) {
-            // 🌟 검색창에 입력한 값도 정규화
             const rawItemNo = document.getElementById('articleInput').value.trim();
             const itemNo = normArt(rawItemNo);
             
             if(!itemNo) { Plotly.newPlot('chartDiv', []); drawTable([], []); return; }
             
             let storeCode = store.split(' - ')[0];
-            // 🌟 원본 데이터와 입력값 모두 정규화하여 매칭
             let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
             
             let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
@@ -475,7 +499,10 @@
             if (weeks.length === 0) { alert(`해당 기간에 "${rawItemNo}" 제품의 데이터/예측 결과가 없습니다.`); return; }
 
             let actX=[], actY=[], projX=[], projY=[], lastX=null, lastY=null;
+            let allY = []; // Y축 다이내믹 계산용 배열
+
             weeks.forEach((w, i) => {
+                allY.push(osas[i]);
                 if(isProjMap[w]) {
                     if(projX.length===0 && lastX) { projX.push(lastX); projY.push(lastY); }
                     projX.push(w); projY.push(osas[i]);
@@ -490,11 +517,26 @@
             let isaX = [], isaY = [];
             actuals.forEach(d => {
                 let wk = String(d['YW - Year Week']);
-                if(!isProjMap[wk] && weeks.includes(wk)) { isaX.push(wk); isaY.push(parseFloat(d['ISA'])); }
+                if(!isProjMap[wk] && weeks.includes(wk)) { 
+                    let isaVal = parseFloat(d['ISA']);
+                    isaX.push(wk); isaY.push(isaVal); 
+                    allY.push(isaVal); // ISA 수치도 Y축 최소값 계산에 포함
+                }
             });
             traces.push({ x: isaX, y: isaY, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: {color: '#ff9900'} });
 
-            Plotly.newPlot('chartDiv', traces, { title: `Item: ${itemNo} - OSA vs Projection`, xaxis: { type: 'category' }, yaxis: { tickformat: '.0%', range: [0, 1.05] }});
+            // 🌟 동적 Y축 범위 계산
+            let validY = allY.filter(v => !isNaN(v) && v !== null);
+            let minY = validY.length > 0 ? Math.min(...validY) : 0;
+            let calculatedMin = Math.max(0, minY - 0.05);
+
+            Plotly.newPlot('chartDiv', traces, { 
+                title: `Item: ${itemNo} - OSA vs Projection`, 
+                xaxis: { type: 'category' }, 
+                yaxis: { tickformat: '.0%', range: [calculatedMin, 1.05] },
+                margin: { t: 40, b: 120 }, // 🌟 하단 여백 추가
+                legend: { orientation: 'h', yanchor: 'top', y: -0.15 } // 🌟 범례 가로 배치
+            });
             
             let isaRowData = ['ISA %'];
             weeks.forEach(w => {
