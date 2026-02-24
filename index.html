@@ -19,7 +19,6 @@
         .sidebar button.danger { background-color: #e74c3c; color: white; cursor: pointer; margin-top: 30px; border: 1px solid #c0392b; }
         .sidebar button.danger:hover { background-color: #c0392b; }
         
-        /* 🌟 버전 정보 CSS */
         .version-info { margin-top: 40px; padding-top: 15px; border-top: 1px solid rgba(255, 255, 255, 0.2); font-size: 13px; text-align: center; }
         .version-text { color: white; font-weight: bold; font-size: 15px; }
         .update-text { color: #ffd100; margin-top: 4px; font-weight: bold; }
@@ -84,7 +83,7 @@
         </div>
 
         <div class="version-info">
-            <div class="version-text">ver 1.0.2</div>
+            <div class="version-text">ver 1.0.3</div>
             <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
@@ -381,40 +380,37 @@
 
                 let scheduledToday = [];
 
-                for(let i = qIndex; i < queuedContainers.length; i++) {
+                // ✅ [v1.0.3] 개선된 컨테이너 할당 로직
+                // 1순위: LF 타입 처리 (quota_LF: 0-1)
+                for(let i = qIndex; i < queuedContainers.length && totalDaily < 5; i++) {
                     let c = queuedContainers[i];
-                    if(c.scheduled) continue;
-                    if(totalDaily >= 5) break; 
-
-                    if (c.type === 'LF' && quota_LF > 0) {
+                    if(c.scheduled || c.type !== 'LF') continue;
+                    if(quota_LF > 0) {
                         c.scheduled = true; quota_LF--; totalDaily++; scheduledToday.push(c);
-                    } else if (c.type === 'HF' && quota_HF > 0) {
+                    } else if(quota_HF > 0) {
                         c.scheduled = true; quota_HF--; totalDaily++; scheduledToday.push(c);
-                    } else if (c.type === 'DD' && quota_DD > 0) {
+                    }
+                }
+
+                // 2순위: HF 타입 처리 (quota_HF: 0-1)
+                for(let i = qIndex; i < queuedContainers.length && totalDaily < 5; i++) {
+                    let c = queuedContainers[i];
+                    if(c.scheduled || c.type !== 'HF') continue;
+                    if(quota_HF > 0) {
+                        c.scheduled = true; quota_HF--; totalDaily++; scheduledToday.push(c);
+                    } else if(quota_DD > 0) {
                         c.scheduled = true; quota_DD--; totalDaily++; scheduledToday.push(c);
                     }
                 }
 
-                for(let i = qIndex; i < queuedContainers.length; i++) {
-                    if(totalDaily >= 5) break;
+                // 3순위: DD 타입 처리 (quota_DD: 0-3)
+                for(let i = qIndex; i < queuedContainers.length && totalDaily < 5; i++) {
                     let c = queuedContainers[i];
-                    if(c.scheduled) continue;
-                    if(c.type === 'HF') { c.scheduled = true; totalDaily++; scheduledToday.push(c); }
-                }
-
-                for(let i = qIndex; i < queuedContainers.length; i++) {
-                    if(totalDaily >= 5) break;
-                    let c = queuedContainers[i];
-                    if(c.scheduled) continue;
-                    if(c.type === 'DD') { c.scheduled = true; totalDaily++; scheduledToday.push(c); }
-                }
-                
-                for(let i = qIndex; i < queuedContainers.length; i++) {
-                    if(totalDaily >= 5) break;
-                    let c = queuedContainers[i];
-                    if(c.scheduled) continue;
-                    if(c.type !== 'LF' && c.type !== 'DD' && c.type !== 'HF') {
-                        c.scheduled = true; totalDaily++; scheduledToday.push(c);
+                    if(c.scheduled || c.type !== 'DD') continue;
+                    if(quota_DD > 0) {
+                        c.scheduled = true; quota_DD--; totalDaily++; scheduledToday.push(c);
+                    } else if(quota_HF > 0) {
+                        c.scheduled = true; quota_HF--; totalDaily++; scheduledToday.push(c);
                     }
                 }
 
@@ -431,6 +427,18 @@
 
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
             lastActualWeek = allWeeks[allWeeks.length - 1]; 
+            
+            // ✅ [v1.0.3] 직전 주(WK08 등)의 제품별 OSA 매핑 - 과거 데이터 추정 제거
+            let prevWeekArticleOSA = {};
+            excelData.Article_level.forEach(d => {
+                if(String(d['YW - Year Week']) === lastActualWeek) {
+                    let storeId = String(d['BU - Business Unit']).split(' - ')[0];
+                    let itemNo = normArt(d['Item Number']);
+                    let osaVal = parseFloat(d['OSA']) || 0;
+                    if (!prevWeekArticleOSA[storeId]) prevWeekArticleOSA[storeId] = {};
+                    prevWeekArticleOSA[storeId][itemNo] = osaVal;
+                }
+            });
             
             let activeStoreArticles = {};
             excelData.Article_level.forEach(d => {
@@ -500,7 +508,6 @@
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
                 
-                // 🌟 버그 픽스: 오늘 기준 재고를 저장 (과거 요일 OSA 판별용)
                 let originalStock = currentStock; 
 
                 if(!projectionData.article[storeId]) projectionData.article[storeId] = {};
@@ -529,17 +536,21 @@
                             else remainOsa = 0; 
                         }
                         
-                        // ✅ [v1.0.2 Fix] pastOsa: 이진법(0/1) → 현재재고 vs 과거기간 소비예상량 비례 계산
-                        //    이진법 사용 시, 재고 1개만 있어도 과거 전체 기간 100% 처리 → WK 인플레이션 발생
-                        let pastSalesEstimate = avgSales * (elapsedDays / 7);
+                        // ✅ [v1.0.3] 과거 OSA 개선: 직전 주 실적 기반 사용 + 현재 재고로 과거 추정
                         let pastOsa;
-                        if (pastSalesEstimate <= 0) {
-                            pastOsa = originalStock > 0 ? 1 : 0;
+                        if(prevWeekArticleOSA[storeId] && prevWeekArticleOSA[storeId][itemNo] !== undefined) {
+                            // 직전 주 실적이 있으면 그것 사용
+                            pastOsa = prevWeekArticleOSA[storeId][itemNo];
                         } else {
-                            // 현재 재고를 과거 기간 예상 소비량과 비교하여 비례 계산
-                            pastOsa = Math.min(1, Math.max(0, originalStock / pastSalesEstimate));
+                            // 없으면 현재 재고 기반 추정 (이진법 대신 비례)
+                            let pastSalesEstimate = avgSales * (elapsedDays / 7);
+                            if (pastSalesEstimate <= 0) {
+                                pastOsa = originalStock > 0 ? 1 : 0;
+                            } else {
+                                pastOsa = Math.min(1, Math.max(0, originalStock / pastSalesEstimate));
+                            }
                         }
-
+                        
                         osa = ((elapsedDays * pastOsa) + (remainDays * remainOsa)) / 7;
                     } 
                     else {
@@ -691,7 +702,7 @@
 
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
-            let calculatedMin = Math.max(0, minY - 0.05); 
+            let calculatedMin = Math.max(0, minY - 0.05);
 
             Plotly.newPlot('chartDiv', traces, { 
                 title: 'All Stores - Weekly OSA Trend', 
@@ -817,29 +828,30 @@
                 legend: { orientation: 'h', yanchor: 'top', y: -0.15 } 
             });
             
-            let isaRowData = ['ISA %'];
-            weeks.forEach(w => {
-                let match = actuals.find(d => normArt(d['Item Number']) === itemNo && String(d['YW - Year Week']) === w);
-                isaRowData.push(match ? (parseFloat(match['ISA']) * 100).toFixed(1) + '%' : '-');
-            });
-            drawTable(['Metric'].concat(weeks), [['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%')), isaRowData], weeks.map(w => isProjMap[w]));
+            let isaRowData = actuals.filter(d => !isProjMap[String(d['YW - Year Week'])])
+                .map(d => [String(d['YW - Year Week']), ((parseFloat(d['ISA'])||0)*100).toFixed(1)+'%']);
+            let osaSalesRowData = weeks.map(w => [w].concat(osas.map(v => (v*100).toFixed(1)+'%')));
+            
+            drawTable(['Week', 'ISA'], isaRowData.concat([[],[]]).concat(osaSalesRowData), weeks.map(w => isProjMap[w]));
         }
 
-        function drawTable(headers, rows, isProjArray = []) {
-            if(headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
-            
-            document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
-                let isProj = (i > 0 && isProjArray[i-1]) ? true : false; 
-                return `<th class="${isProj ? 'proj-col' : ''}">${h} ${isProj ? '<br>(Proj)' : ''}</th>`;
+        function drawTable(headers, rows, isProjFlags) {
+            let headerHtml = headers.map((h, i) => {
+                let isProj = isProjFlags && isProjFlags[i];
+                return `<th ${isProj ? 'class="proj-col"' : ''}>${h}</th>`;
             }).join('');
-            
-            document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map((c, i) => {
-                let isProj = (i > 0 && isProjArray[i-1]) ? true : false;
-                return `<td class="${isProj ? 'proj-cell' : ''}">${c}</td>`;
-            }).join('')}</tr>`).join('');
+            document.getElementById('tableHead').innerHTML = `<tr>${headerHtml}</tr>`;
+
+            let bodyHtml = rows.map(row => {
+                return `<tr>${row.map((cell, i) => {
+                    let isProj = isProjFlags && isProjFlags[i];
+                    return `<td ${isProj ? 'class="proj-cell"' : ''}>${cell}</td>`;
+                }).join('')}</tr>`;
+            }).join('');
+            document.getElementById('tableBody').innerHTML = bodyHtml;
         }
 
-        window.onload = loadExcelFiles;
+        loadExcelFiles();
     </script>
 </body>
 </html>
