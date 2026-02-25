@@ -21,39 +21,29 @@
         .version-info { margin-top: 40px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 13px; text-align: center; }
         .version-text { color: white; font-weight: bold; font-size: 15px; }
         .update-text { color: #ffd100; margin-top: 4px; font-weight: bold; }
-        
         .time-filter-container { display: flex; gap: 5px; align-items: center; margin-top: 5px; }
         .time-filter-container select { margin-top: 0; }
-        
-        /* 🌟 계단식 필터 UI 영역 */
-        #hierarchyFilters { margin-top: 15px; border-top: 1px dashed #668cff; padding-top: 5px; }
-        
         .main-content { margin-left: 260px; padding: 30px; width: calc(100% - 260px); box-sizing: border-box; }
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
         .header-desc { font-size: 14px; color: #666; margin-bottom: 20px; }
-        
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        
         .table-container { overflow-x: auto; white-space: nowrap; max-height: 500px; }
         table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; width: 100%; }
         th, td { padding: 10px 15px; border: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #333; font-weight: bold; position: sticky; top: 0; z-index: 2; }
         td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; z-index: 3; }
-        th:first-child { z-index: 4; }
+        th:first-child { z-index: 4; } 
         th.proj-col { background-color: #ffe8a1; color: #003399; }
         td.proj-cell { background-color: #fff8dc; font-style: italic; }
-        
         #loading { font-size: 18px; font-weight: bold; color: #003399; display: flex; align-items: center; margin-bottom: 20px; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #ffcc00; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; margin-right: 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-
     <div class="sidebar">
         <div class="sidebar-content">
             <h2 onclick="window.location.reload();" title="홈페이지로 돌아가기">📊 Availability Report</h2>
-            
             <label>1. View Level</label>
             <select id="viewLevel" onchange="updateSidebarUI()">
                 <option value="store">1. Store Overview</option>
@@ -61,14 +51,12 @@
                 <option value="pa">3. PA Level</option>
                 <option value="article">4. Article Level</option>
             </select>
-            
             <label>⏱️ Time Period</label>
             <div class="time-filter-container">
                 <select id="fromWeek" onchange="updateView()"><option>Loading...</option></select>
                 <span style="color:white;font-weight:bold;">~</span>
                 <select id="toWeek" onchange="updateView()"><option>Loading...</option></select>
             </div>
-
             <div id="storeFilter" style="display:none;">
                 <label>2. Select Store</label>
                 <select id="storeSelect" onchange="updateSidebarUI()"><option value="Loading...">Loading...</option></select>
@@ -77,7 +65,6 @@
             <div id="hierarchyFilters" style="display:none;">
                 <label>3. Select HFB</label>
                 <select id="hfbSelect" onchange="onHfbChange()"></select>
-                
                 <div id="paFilterContainer">
                     <label>4. Select PA</label>
                     <select id="paSelect" onchange="updateView()"></select>
@@ -86,15 +73,14 @@
 
             <div id="articleSearchFilter" style="display:none; margin-top: 15px;">
                 <label>🔍 Specific Article (Optional)</label>
-                <input type="text" id="articleInput" placeholder="빈칸이면 PA 전체 조회" onkeypress="handleEnter(event)">
+                <input type="text" id="articleInput" placeholder="빈칸이면 그룹 전체 조회" onkeypress="handleEnter(event)">
                 <button class="primary" onclick="updateView()">조회하기</button>
             </div>
 
             <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
         </div>
-
         <div class="version-info">
-            <div class="version-text">ver 2.0.0</div>
+            <div class="version-text">ver 2.0.2</div>
             <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
@@ -102,17 +88,14 @@
     <div class="main-content">
         <div class="header-title" id="mainTitle">Store Overview</div>
         <div class="header-desc" id="subTitle">하단 범례(Legend)를 클릭하여 원하는 선만 켜고 끌 수 있습니다. (점선 및 노란색 표시는 물류 CAPA 기반 예측값입니다.)</div>
-        
         <div id="loading">
             <div class="spinner"></div>
             <span id="loadingText">데이터를 확인 중입니다. 잠시만 기다려주세요...</span>
         </div>
-        
         <div id="dashboard" style="display:none;">
             <div class="card">
                 <div id="chartDiv" style="width:100%;height:600px;"></div>
             </div>
-            
             <div class="card">
                 <h3 style="margin-top:0;color:#333;font-size:18px;">Data Table</h3>
                 <div class="table-container">
@@ -131,19 +114,22 @@
         let lastActualWeek = "";
         let csmToSimulatedWeek = {};
         
-        // 🌟 계층 구조 매핑 트리 (Store -> HFB -> PA -> Set[Articles])
         let hierarchy = {};
-        let hfbNameMap = {}; // HFB 숫자 -> 이름 매핑용
+        let hfbNameMap = {}; 
 
         const DB_NAME = "OsaDashboardDB";
         const STORE_NAME = "cache";
 
+        // 🌟 DB 버전 4로 강제 상승 (PA 데이터 갱신을 위해 기존 캐시 무효화)
         function openDB() {
             return new Promise((resolve, reject) => {
-                let req = indexedDB.open(DB_NAME, 3); // 메이저 업데이트로 DB 초기화
+                let req = indexedDB.open(DB_NAME, 4); 
                 req.onupgradeneeded = e => {
                     let db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME);
+                    } else {
+                        db.deleteObjectStore(STORE_NAME);
                         db.createObjectStore(STORE_NAME);
                     }
                 };
@@ -195,6 +181,7 @@
             return str;
         }
 
+        // 🌟 PA 4자리 정규화
         function normPA(val) {
             if (val === undefined || val === null || val === "") return "";
             let str = String(val).trim().split(' ')[0]; 
@@ -301,10 +288,34 @@
                 updateLoadingStatus("2/5: 과거 실적(FY26 OSA) 데이터를 분석 중입니다...");
                 await new Promise(r => setTimeout(r, 50));
                 const wb1 = XLSX.read(ab1, { type: 'array' });
+                
                 excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
                 excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
-                excelData.PA = cleanData(getSheetData(wb1, 'PA'), ['OSA']);
-                excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']); // ISA 삭제
+                excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']);
+
+                // 🌟 [핵심 픽스] PA 시트는 A, B, D, E 열을 강제로 명시적 맵핑함
+                let paSheet = wb1.Sheets['PA'];
+                if(paSheet) {
+                    let rawPa = XLSX.utils.sheet_to_json(paSheet, { header: "A", raw: true, defval: "" });
+                    let mappedPa = [];
+                    rawPa.slice(1).forEach(row => {
+                        let yw = String(row['A'] || '').trim();
+                        let bu = String(row['B'] || '').trim();
+                        let paCode = normPA(row['D']);
+                        let osaVal = row['E'];
+                        if(yw && bu && paCode) {
+                            mappedPa.push({
+                                'YW - Year Week': yw,
+                                'BU - Business Unit': bu,
+                                'PA': paCode,
+                                'OSA': osaVal
+                            });
+                        }
+                    });
+                    excelData.PA = cleanData(mappedPa, ['OSA']);
+                } else {
+                    excelData.PA = [];
+                }
 
                 updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (약 5초 소요)");
                 await new Promise(r => setTimeout(r, 50));
@@ -344,12 +355,10 @@
             }
         }
 
-        // 🌟 계층 구조 및 이름 맵핑 초기화
         function buildHierarchy() {
             hierarchy = {};
             hfbNameMap = {};
             
-            // HFB 이름 맵핑
             excelData.HFB.forEach(d => {
                 let name = d['HFB Name - Home Furnishing Business Name'];
                 if(name) {
@@ -358,7 +367,6 @@
                 }
             });
 
-            // Store -> HFB -> PA -> Articles 트리 구성
             excelData.AL010.forEach(row => {
                 let slValue = parseInt(row['SL']);
                 if (isNaN(slValue) || slValue < 1 || slValue > 4) return;
@@ -624,16 +632,15 @@
             });
         }
 
-        // 🌟 테이블 WK 정렬의 핵심: 글로벌 가시적 주차 생성기
+        // 🌟 타임라인 정렬 핵심
         function getVisibleWeeks() {
             let fromWk = document.getElementById('fromWeek').value;
             let toWk = document.getElementById('toWeek').value;
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])))].sort();
             let totalWeeks = allWeeks.concat(projectionData.weeks);
-            return totalWeeks.filter(w => w >= fromWk && w <= toWk).sort(); // 무조건 오름차순 정렬
+            return totalWeeks.filter(w => w >= fromWk && w <= toWk).sort(); 
         }
 
-        // 🌟 사이드바 UI 컨트롤 매니저 (계단식 필터 적용)
         function updateSidebarUI() {
             const level = document.getElementById('viewLevel').value;
             document.getElementById('storeFilter').style.display = (level !== 'store') ? 'block' : 'none';
@@ -642,7 +649,7 @@
             document.getElementById('paFilterContainer').style.display = (level === 'pa' || level === 'article') ? 'block' : 'none';
             
             if (level === 'pa' || level === 'article') {
-                populateHfbDropdown(); // HFB를 채우면 연쇄적으로 PA도 채워짐
+                populateHfbDropdown(); 
             } else {
                 updateView();
             }
@@ -755,7 +762,6 @@
                 let rowData = [st];
                 let hasData = false;
 
-                // 🌟 강력한 고정 타임라인 반복
                 visWeeks.forEach(w => {
                     let val = osaMap[w];
                     if (val !== undefined && val !== null) {
@@ -845,21 +851,18 @@
             drawTable(['HFB Name'].concat(visWeeks), tableRows, visWeeks.map(w => w > lastActualWeek));
         }
 
-        // 🌟 진화된 PA 데이터 렌더링 (지정된 HFB 내의 PA들만)
         function renderPAData(store) {
             let storeCode = store.split(' - ')[0];
             let hfb = document.getElementById('hfbSelect').value;
             let selectedPa = document.getElementById('paSelect').value;
             
-            // 'ALL' 이면 해당 HFB의 모든 PA, 아니면 선택된 1개 PA
             let targetPAs = selectedPa === 'ALL' ? Object.keys(hierarchy[storeCode]?.[hfb] || {}).sort() : [selectedPa];
             
             let visWeeks = getVisibleWeeks();
             let traces = [], tableRows = [], allY = [];
             
             targetPAs.forEach(pa => {
-                // 원본 엑셀 PA 시트 매칭 (0111 규격 통일)
-                let paActuals = excelData.PA.filter(d => d['BU - Business Unit'].includes(storeCode) && normPA(d['PA']) === pa);
+                let paActuals = excelData.PA.filter(d => String(d['BU - Business Unit']).includes(storeCode) && normPA(d['PA']) === pa);
                 
                 let osaMap = {};
                 paActuals.forEach(d => { osaMap[String(d['YW - Year Week'])] = parseFloat(d['OSA']); });
@@ -908,7 +911,6 @@
             drawTable(['PA Number'].concat(visWeeks), tableRows, visWeeks.map(w => w > lastActualWeek));
         }
 
-        // 🌟 궁극의 Article 레벨 뷰 (개별 검색 우선, 없으면 그룹 리스트 전개)
         function renderArticleData(store) {
             let storeCode = store.split(' - ')[0];
             let searchInput = document.getElementById('articleInput').value.trim();
@@ -917,18 +919,13 @@
             
             let targetArticles = [];
             
-            // 1순위: 직접 검색창에 친 경우
             if (searchInput) {
                 targetArticles = [normArt(searchInput)];
-            } 
-            // 2순위: 드롭다운으로 그룹을 잡은 경우
-            else if (hfb) {
+            } else if (hfb) {
                 if (pa === 'ALL') {
-                    // HFB 전체 아이템
                     let paObj = hierarchy[storeCode]?.[hfb] || {};
                     for(let p in paObj) paObj[p].forEach(a => targetArticles.push(a));
                 } else if (pa) {
-                    // 특정 PA 아이템
                     let set = hierarchy[storeCode]?.[hfb]?.[pa];
                     if(set) targetArticles = Array.from(set);
                 }
@@ -943,7 +940,6 @@
             let allY = [];
             let groupSum = {}, groupCnt = {};
 
-            // 데이터 수집 루프
             targetArticles.forEach(itemNo => {
                 let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'].includes(storeCode) && normArt(d['Item Number']) === itemNo);
                 
@@ -972,13 +968,11 @@
                 if (hasData) tableRows.push(rowData);
             });
 
-            // 차트 렌더링
             let traces = [];
             if (searchInput && targetArticles.length === 1) {
-                // 단일 아이템 검색 시 -> 해당 아이템의 그래프
-                let osaMap = {};
                 let itemNo = targetArticles[0];
                 let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'].includes(storeCode) && normArt(d['Item Number']) === itemNo);
+                let osaMap = {};
                 actuals.forEach(d => { osaMap[String(d['YW - Year Week'])] = parseFloat(d['OSA']); });
                 if (projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) {
                     Object.assign(osaMap, projectionData.article[storeCode][itemNo]);
@@ -1001,9 +995,8 @@
                 if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
                 
                 let minY = allY.length > 0 ? Math.min(...allY) : 0;
-                Plotly.newPlot('chartDiv', traces, { title: `Item: ${itemNo} - Weekly OSA`, xaxis: { type: 'category' }, yaxis: { tickformat: '.0%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 } });
+                Plotly.newPlot('chartDiv', traces, { title: `Item: ${itemNo} - Weekly OSA`, xaxis: { type: 'category' }, yaxis: { tickformat: '.0%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 }, legend: { orientation: 'h', yanchor: 'top', y: -0.15 } });
             } else {
-                // 그룹 다중 검색 시 -> 전체 평균 그래프
                 let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
                 visWeeks.forEach(w => {
                     if (groupCnt[w] > 0) {
@@ -1022,7 +1015,7 @@
                 
                 let title = pa === 'ALL' ? `HFB ${hfb} Total Items Average` : `PA ${pa} Items Average`;
                 let minY = allY.length > 0 ? Math.min(...allY) : 0;
-                Plotly.newPlot('chartDiv', traces, { title: title, xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 } });
+                Plotly.newPlot('chartDiv', traces, { title: title, xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 }, legend: { orientation: 'h', yanchor: 'top', y: -0.15 } });
             }
 
             drawTable(['Article No.'].concat(visWeeks), tableRows, visWeeks.map(w => w > lastActualWeek));
@@ -1032,12 +1025,12 @@
             if (headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
             document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
                 let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
-                return '<th' + (isProj ? ' class="proj-col"' : '') + '>' + h + '</th>';
+                return `<th${isProj ? ' class="proj-col"' : ''}>${h}</th>`;
             }).join('');
-            document.getElementById('tableBody').innerHTML = rows.map(r => '<tr>' + r.map((c, i) => {
+            document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map((c, i) => {
                 let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
-                return '<td' + (isProj ? ' class="proj-cell"' : '') + '>' + c + '</td>';
-            }).join('') + '</tr>').join('');
+                return `<td${isProj ? ' class="proj-cell"' : ''}>${c}</td>`;
+            }).join('')}</tr>`).join('');
         }
 
         window.onload = loadExcelFiles;
