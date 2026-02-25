@@ -32,7 +32,7 @@
         th, td { padding: 10px 15px; border: 1px solid #ddd; }
         th { background-color: #f8f9fa; color: #333; font-weight: bold; position: sticky; top: 0; z-index: 2; }
         td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; z-index: 3; }
-        th:first-child { z-index: 4; } /* 🌟 좌상단 헤더 고정 보강 */
+        th:first-child { z-index: 4; } 
         th.proj-col { background-color: #ffe8a1; color: #003399; }
         td.proj-cell { background-color: #fff8dc; font-style: italic; }
         #loading { font-size: 18px; font-weight: bold; color: #003399; display: flex; align-items: center; margin-bottom: 20px; }
@@ -74,7 +74,7 @@
             <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
         </div>
         <div class="version-info">
-            <div class="version-text">ver 2.0.0</div>
+            <div class="version-text">ver 2.0.1</div>
             <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
@@ -103,7 +103,6 @@
     </div>
 
     <script>
-        // 🌟 excelData.PA 추가
         let excelData = { STO_OSA: [], HFB: [], PA: [], Article_level: [], AL010: [], Table7: [], SHP: [] };
         let projectionData = { store: {}, hfb: {}, pa: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
@@ -112,12 +111,19 @@
         const DB_NAME = "OsaDashboardDB";
         const STORE_NAME = "cache";
 
+        // 🌟 DB 오픈 시 충돌 방지 완벽 적용
         function openDB() {
             return new Promise((resolve, reject) => {
-                let req = indexedDB.open(DB_NAME, 2); // DB 버전을 2로 올려 기존 캐시 덮어쓰기 유도
-                req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
+                let req = indexedDB.open(DB_NAME, 2); 
+                req.onupgradeneeded = e => {
+                    let db = e.target.result;
+                    // 저장소가 없을 때만 새로 만들도록 조건 추가 (이게 없어서 undefined 뻗음)
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME);
+                    }
+                };
                 req.onsuccess = e => resolve(e.target.result);
-                req.onerror = e => reject(e);
+                req.onerror = e => reject(e.target.error || new Error("IndexedDB 초기화 실패"));
             });
         }
 
@@ -135,16 +141,20 @@
                 let tx = db.transaction(STORE_NAME, 'readwrite');
                 tx.objectStore(STORE_NAME).put(val, key);
                 tx.oncomplete = () => resolve();
-                tx.onerror = () => reject();
+                tx.onerror = e => reject(e.target.error || new Error("IndexedDB 저장 실패"));
             });
         }
 
         async function forceRefreshCache() {
             if (confirm("저장된 엑셀 캐시를 삭제하고 파일을 다시 분석하시겠습니까?\n(약 5~10초 소요됩니다)")) {
-                let db = await openDB();
-                let tx = db.transaction(STORE_NAME, 'readwrite');
-                tx.objectStore(STORE_NAME).clear();
-                tx.oncomplete = () => window.location.reload();
+                try {
+                    let db = await openDB();
+                    let tx = db.transaction(STORE_NAME, 'readwrite');
+                    tx.objectStore(STORE_NAME).clear();
+                    tx.oncomplete = () => window.location.reload();
+                } catch(e) {
+                    alert("캐시 삭제에 실패했습니다. 브라우저를 껐다 켜주세요.");
+                }
             }
         }
 
@@ -160,10 +170,9 @@
             return str;
         }
 
-        // 🌟 PA 코드를 4자리 문자로 고정하는 함수 (예: 111 -> "0111")
         function normPA(val) {
             if (val === undefined || val === null || val === "") return "";
-            let str = String(val).trim().split(' ')[0]; // 혹시 "0111 - Name" 형태면 앞쪽 숫자만 땀
+            let str = String(val).trim().split(' ')[0]; 
             if (/^\d+$/.test(str)) {
                 return str.padStart(4, '0');
             }
@@ -239,12 +248,11 @@
                 let cachedOsaMod = await getDB(db, 'osa_mod');
                 let cachedOrdMod = await getDB(db, 'ord_mod');
 
-                // 🌟 PA 데이터 캐시까지 확인하도록 로직 추가
                 if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
                     updateLoadingStatus("저장된 엑셀 캐시를 불러옵니다. (초고속 로딩 ⚡)");
                     excelData.STO_OSA = await getDB(db, 'STO_OSA');
                     excelData.HFB = await getDB(db, 'HFB');
-                    excelData.PA = await getDB(db, 'PA'); // 추가됨
+                    excelData.PA = await getDB(db, 'PA'); 
                     excelData.Article_level = await getDB(db, 'Article_level');
                     excelData.AL010 = await getDB(db, 'AL010');
                     excelData.Table7 = await getDB(db, 'Table7');
@@ -269,7 +277,6 @@
                 const wb1 = XLSX.read(ab1, { type: 'array' });
                 excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
                 excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
-                // 🌟 PA 시트 로드
                 excelData.PA = cleanData(getSheetData(wb1, 'PA'), ['OSA']);
                 excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']);
 
@@ -287,7 +294,7 @@
                 await putDB(db, 'ord_mod', ordMod);
                 await putDB(db, 'STO_OSA', excelData.STO_OSA);
                 await putDB(db, 'HFB', excelData.HFB);
-                await putDB(db, 'PA', excelData.PA); // 추가
+                await putDB(db, 'PA', excelData.PA);
                 await putDB(db, 'Article_level', excelData.Article_level);
                 await putDB(db, 'AL010', excelData.AL010);
                 await putDB(db, 'Table7', excelData.Table7);
@@ -302,12 +309,13 @@
                 document.getElementById('dashboard').style.display = 'block';
 
             } catch (error) {
-                document.getElementById('loading').innerHTML = '<span style="color:red;font-size:16px;">❌ 오류: ' + error.message + '</span>';
+                // 🌟 undefined 대신 확실한 에러 메세지 출력 보장
+                let msg = error.message || error.toString();
+                document.getElementById('loading').innerHTML = `<span style="color:red;font-size:16px;">❌ 오류: ${msg}</span>`;
                 console.error(error);
             }
         }
 
-        // 컨테이너 스케줄링 시뮬레이터 (그대로 유지)
         function runContainerSimulation() {
             csmToSimulatedWeek = {};
             let containers = {};
@@ -425,7 +433,6 @@
         }
 
         function calculateProjections() {
-            // 🌟 pa 예측 저장 공간 추가
             projectionData = { store: {}, hfb: {}, pa: {}, article: {}, weeks: [] };
 
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
@@ -492,7 +499,7 @@
                 if (!activeStoreArticles[storeId] || !activeStoreArticles[storeId].has(itemNo)) return;
 
                 let hfb = String(row['HFB']);
-                let paCode = normPA(row['PA']); // 🌟 PA 4자리 정규화
+                let paCode = normPA(row['PA']); 
                 
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
@@ -556,7 +563,6 @@
                     projectionData.hfb[storeId][hfb][wk].sum += projOsaMap[wk];
                     projectionData.hfb[storeId][hfb][wk].cnt++;
 
-                    // 🌟 PA 집계 추가
                     if (!projectionData.pa[storeId][paCode][wk]) projectionData.pa[storeId][paCode][wk] = { sum: 0, cnt: 0 };
                     projectionData.pa[storeId][paCode][wk].sum += projOsaMap[wk];
                     projectionData.pa[storeId][paCode][wk].cnt++;
@@ -766,7 +772,6 @@
             drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
-        // 🌟 새로 추가된 PA 렌더링 함수
         function renderPAData(store) {
             let storeCode = store.split(' - ')[0];
             let actData = excelData.PA.filter(d => d['BU - Business Unit'] === store);
@@ -776,7 +781,6 @@
             let allY = [];
             
             pas.forEach(pa => {
-                // 원본 엑셀의 D열(PA)이 "0111 - xxx" 이거나 "111" 이거나 섞여있을 수 있으므로 normPA로 필터링
                 let paActuals = actData.filter(d => normPA(d['PA']) === pa);
                 
                 let { weeks, osas, isProjMap } = getCombinedData(paActuals, storeCode, () => {
@@ -822,7 +826,6 @@
             drawTable(['PA Number'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
-        // 🌟 완전히 진화한 Article Level 렌더링 (단일 검색 + HFB/PA 그룹 테이블 스크롤 대응)
         function renderArticleData(store) {
             let storeCode = store.split(' - ')[0];
             const rawItemNo = document.getElementById('articleInput').value.trim();
@@ -832,7 +835,6 @@
                 Plotly.newPlot('chartDiv', []); drawTable([], []); return; 
             }
 
-            // --- 1. 단일 제품 검색 모드 ---
             if (rawItemNo) {
                 const itemNo = normArt(rawItemNo);
                 let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
@@ -869,16 +871,14 @@
                     legend: { orientation: 'h', yanchor: 'top', y: -0.15 }
                 });
                 
-                let osaRow = ['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
-                drawTable(['Metric'].concat(weeks), [osaRow], weeks.map(w => isProjMap[w]));
+                let osaRow = [itemNo].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
+                drawTable(['Article No.'].concat(weeks), [osaRow], weeks.map(w => isProjMap[w]));
             } 
-            // --- 2. HFB / PA 그룹 다중 제품 리스트 모드 ---
             else if (filterGroup) {
                 let isHFB = filterGroup.startsWith('HFB_');
-                let targetValue = filterGroup.substring(4); // 예: "HFB_11 - Living room" -> "11 - Living room"
+                let targetValue = filterGroup.substring(4); 
                 let targetNum = isHFB ? parseInt(targetValue.split(' - ')[0]).toString() : targetValue; 
                 
-                // 해당 그룹에 속하는 모든 활성 아이템 추출 (AL010 기준)
                 let matchedItems = new Set();
                 excelData.AL010.forEach(row => {
                     if (String(row['MHS_ID']) !== storeCode) return;
@@ -896,13 +896,11 @@
                     alert("선택한 그룹에 활성 제품이 없습니다."); return;
                 }
 
-                // 평균(Average) 그래프용 데이터 계산 및 테이블 행(Row) 생성
                 let tableRows = [];
                 let tableWeeks = [];
                 let isProjFlags = {};
                 let groupSum = {}, groupCnt = {};
                 
-                // 가로 정렬(기간 필터)를 위한 기준 주차 뽑기
                 let dummyActuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && matchedItems.has(normArt(d['Item Number'])));
                 let { weeks: baseWeeks, isProjMap: baseProjMap } = getCombinedData(dummyActuals, storeCode, () => projectionData.article[storeCode] ? projectionData.article[storeCode][Array.from(matchedItems)[0]] : null);
                 
@@ -918,19 +916,16 @@
                     });
                     
                     if(weeks.length > 0) {
-                        // 평균 집계
                         weeks.forEach((w, i) => {
                             if(groupSum[w] !== undefined && !isNaN(osas[i])) {
                                 groupSum[w] += osas[i];
                                 groupCnt[w]++;
                             }
                         });
-                        // 테이블 행 추가
                         tableRows.push([itemNo].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
                     }
                 });
 
-                // 그래프 (평균선 1개만)
                 let avgActX=[], avgActY=[], avgProjX=[], avgProjY=[], lastX=null, lastY=null;
                 let allY = [];
                 tableWeeks.forEach(w => {
@@ -956,7 +951,6 @@
                     legend: { orientation: 'h', yanchor: 'top', y: -0.15 }
                 });
 
-                // 테이블에 전체 제품 리스트 렌더링
                 drawTable(['Article No.'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
             }
         }
