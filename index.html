@@ -33,7 +33,6 @@
         
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         
-        /* 🌟 CAPA 세팅 테이블 전용 디자인 */
         .capa-table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 15px; text-align: center; }
         .capa-table th { background-color: #003399; color: white; padding: 12px; }
         .capa-table td { background-color: #f8f9fa; padding: 10px; border: 1px solid #ddd; }
@@ -98,11 +97,11 @@
                 <button class="primary" onclick="updateView()">조회하기</button>
             </div>
 
-            <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
+            <button class="danger" onclick="forceRefreshCache()">🔄 캐시 폭파 & 새로고침</button>
         </div>
 
         <div class="version-info">
-            <div class="version-text">ver 2.1.0</div>
+            <div class="version-text">ver 2.1.1</div>
             <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
@@ -113,7 +112,7 @@
         
         <div id="loading">
             <div class="spinner"></div>
-            <span id="loadingText">데이터를 확인 중입니다. 잠시만 기다려주세요...</span>
+            <span id="loadingText">시스템을 준비 중입니다. 잠시만 기다려주세요...</span>
         </div>
         
         <div id="settingsView" style="display:none;">
@@ -134,7 +133,7 @@
                         </tr>
                     </thead>
                     <tbody id="capaSettingsBody">
-                        </tbody>
+                    </tbody>
                 </table>
                 <div style="text-align:right; margin-top:20px;">
                     <button class="primary" style="font-size:16px; padding:12px 24px; border-radius: 8px;" onclick="applySimulationSettings()">🚀 이 설정으로 OSA 예측 다시 돌리기</button>
@@ -168,7 +167,6 @@
         let hierarchy = {};
         let hfbNameMap = {}; 
 
-        // 🌟 기본 요일별 CAPA 설정 (0:일 ~ 6:토)
         let capaConfig = {
             0: { LF: 1, HF: 1, DD: 3 }, // Sun
             1: { LF: 1, HF: 1, DD: 3 }, // Mon
@@ -181,53 +179,58 @@
 
         const dayNames = ["일요일 (Sun)", "월요일 (Mon)", "화요일 (Tue)", "수요일 (Wed)", "목요일 (Thu)", "금요일 (Fri)", "토요일 (Sat)"];
 
-        const DB_NAME = "OsaDashboardDB";
+        // 🌟 1. 데드락 방지를 위해 DB 이름을 v3로 완전히 교체
+        const DB_NAME = "OsaDashboardDB_v3"; 
         const STORE_NAME = "cache";
 
         function openDB() {
             return new Promise((resolve, reject) => {
-                let req = indexedDB.open(DB_NAME, 4); 
+                let req = indexedDB.open(DB_NAME, 1); 
                 req.onupgradeneeded = e => {
                     let db = e.target.result;
                     if (!db.objectStoreNames.contains(STORE_NAME)) {
                         db.createObjectStore(STORE_NAME);
-                    } else {
-                        db.deleteObjectStore(STORE_NAME);
-                        db.createObjectStore(STORE_NAME);
                     }
                 };
                 req.onsuccess = e => resolve(e.target.result);
-                req.onerror = e => reject(e.target.error || new Error("IndexedDB 초기화 실패"));
+                // 🌟 2. 탭 중복 에러나 블록 에러 시 즉시 Reject 처리하여 무한대기 방지
+                req.onerror = e => reject(new Error("IndexedDB Error"));
+                req.onblocked = e => reject(new Error("DB Blocked"));
             });
         }
 
         function getDB(db, key) {
             return new Promise((resolve) => {
-                let tx = db.transaction(STORE_NAME, 'readonly');
-                let req = tx.objectStore(STORE_NAME).get(key);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
+                try {
+                    let tx = db.transaction(STORE_NAME, 'readonly');
+                    let req = tx.objectStore(STORE_NAME).get(key);
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(null);
+                } catch(e) { resolve(null); }
             });
         }
 
         function putDB(db, key, val) {
             return new Promise((resolve, reject) => {
-                let tx = db.transaction(STORE_NAME, 'readwrite');
-                tx.objectStore(STORE_NAME).put(val, key);
-                tx.oncomplete = () => resolve();
-                tx.onerror = e => reject(e.target.error || new Error("IndexedDB 저장 실패"));
+                try {
+                    let tx = db.transaction(STORE_NAME, 'readwrite');
+                    tx.objectStore(STORE_NAME).put(val, key);
+                    tx.oncomplete = () => resolve();
+                    tx.onerror = () => reject();
+                } catch(e) { reject(e); }
             });
         }
 
-        async function forceRefreshCache() {
-            if (confirm("저장된 엑셀 캐시를 삭제하고 파일을 다시 분석하시겠습니까?\n(약 5~10초 소요됩니다)")) {
+        // 🌟 3. 완벽한 캐시 폭파 함수
+        function forceRefreshCache() {
+            if (confirm("저장된 엑셀 캐시를 완전히 삭제하시겠습니까?\n(오류가 발생할 때 누르면 유용합니다)")) {
                 try {
-                    let db = await openDB();
-                    let tx = db.transaction(STORE_NAME, 'readwrite');
-                    tx.objectStore(STORE_NAME).clear();
-                    tx.oncomplete = () => window.location.reload();
+                    let req = indexedDB.deleteDatabase(DB_NAME);
+                    req.onsuccess = () => { alert("캐시 삭제 완료! 데이터를 새로 다운로드합니다."); window.location.reload(); };
+                    req.onerror = () => { alert("캐시 삭제 실패. 브라우저 창을 껐다 켜주세요."); window.location.reload(); };
+                    req.onblocked = () => { alert("다른 대시보드 탭이 켜져 있어 삭제가 지연됩니다. 다른 탭을 모두 닫아주세요!"); };
                 } catch(e) {
-                    alert("캐시 삭제 실패. 브라우저를 다시 켜주세요.");
+                    window.location.reload();
                 }
             }
         }
@@ -235,6 +238,7 @@
         function updateLoadingStatus(msg) {
             let el = document.getElementById('loadingText');
             if (el) el.innerText = msg;
+            console.log(msg); // 디버깅용
         }
 
         function normArt(val) {
@@ -308,7 +312,6 @@
             }) : [];
         };
 
-        // 🌟 CAPA 세팅 UI 렌더링
         function buildSettingsUI() {
             let html = "";
             for(let i=0; i<7; i++) {
@@ -334,129 +337,130 @@
             document.getElementById(`capa_${dayIdx}_tot`).innerText = (lf + hf + dd) + "대";
         }
 
-        // 🌟 사용자가 설정 적용 버튼을 눌렀을 때
         function applySimulationSettings() {
-            // 1. 값 저장
             for(let i=0; i<7; i++) {
                 capaConfig[i].LF = parseInt(document.getElementById(`capa_${i}_LF`).value) || 0;
                 capaConfig[i].HF = parseInt(document.getElementById(`capa_${i}_HF`).value) || 0;
                 capaConfig[i].DD = parseInt(document.getElementById(`capa_${i}_DD`).value) || 0;
             }
-            
-            // 2. UI 전환 (로딩 표시)
             document.getElementById('settingsView').style.display = 'none';
             document.getElementById('dashboard').style.display = 'none';
             document.getElementById('loading').style.display = 'flex';
             updateLoadingStatus("새로운 CAPA 설정으로 큐(Queue)를 재정렬하고 예측을 계산 중입니다...");
 
-            // 3. 비동기 재계산 실행
             setTimeout(() => {
                 runContainerSimulation();
                 calculateProjections();
-                initFilters(); // 필터 갱신
-                
-                // 완료 후 1번. 스토어 뷰로 강제 이동
+                initFilters(); 
                 document.getElementById('viewLevel').value = 'store';
                 updateSidebarUI(); 
-                
                 document.getElementById('loading').style.display = 'none';
             }, 100);
         }
 
-
         async function loadExcelFiles() {
             try {
-                buildSettingsUI(); // 세팅 UI 초기화
+                buildSettingsUI(); 
+                updateLoadingStatus("캐시 DB 연결 중...");
 
-                let db = await openDB();
-                let osaMod = 'unknown1', ordMod = 'unknown2';
+                let db = null;
+                // 🌟 4. 타임아웃 레이스: 3초 안에 DB 못열면 무시하고 쌩 다운로드 진행
                 try {
-                    let h1 = await fetch('./FY26 OSA.xlsx', { method: 'HEAD' });
-                    osaMod = h1.headers.get('Last-Modified') || h1.headers.get('ETag') || '1';
-                    let h2 = await fetch('./Order.xlsx', { method: 'HEAD' });
-                    ordMod = h2.headers.get('Last-Modified') || h2.headers.get('ETag') || '2';
-                } catch (e) { console.warn("Local env header check skipped."); }
+                    db = await Promise.race([
+                        openDB(),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("DB_TIMEOUT")), 3000))
+                    ]);
+                } catch(dbErr) {
+                    console.warn("DB 연결 지연/실패. 캐시를 무시하고 엑셀을 강제로 새로 받습니다.");
+                }
 
-                let cachedOsaMod = await getDB(db, 'osa_mod');
-                let cachedOrdMod = await getDB(db, 'ord_mod');
+                let useCache = false;
+                let osaMod = 'unknown1', ordMod = 'unknown2';
 
-                if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
-                    updateLoadingStatus("저장된 엑셀 캐시를 불러옵니다. (초고속 로딩 ⚡)");
-                    excelData.STO_OSA = await getDB(db, 'STO_OSA');
-                    excelData.HFB = await getDB(db, 'HFB');
-                    excelData.PA = await getDB(db, 'PA'); 
-                    excelData.Article_level = await getDB(db, 'Article_level');
-                    excelData.AL010 = await getDB(db, 'AL010');
-                    excelData.Table7 = await getDB(db, 'Table7');
-                    excelData.SHP = await getDB(db, 'SHP');
-                    if (excelData.STO_OSA && excelData.AL010 && excelData.PA) {
-                        buildHierarchy();
-                        runContainerSimulation();
-                        calculateProjections();
-                        initFilters();
-                        document.getElementById('loading').style.display = 'none';
-                        // 🌟 처음 접속 시 Settings View 오픈
-                        document.getElementById('viewLevel').value = 'settings';
-                        updateSidebarUI();
-                        return;
+                if (db) {
+                    updateLoadingStatus("파일 업데이트 여부 확인 중...");
+                    try {
+                        let h1 = await Promise.race([fetch('./FY26 OSA.xlsx', { method: 'HEAD' }), new Promise((_, r) => setTimeout(r, 2000))]);
+                        if(h1 && h1.headers) osaMod = h1.headers.get('Last-Modified') || h1.headers.get('ETag') || '1';
+                        
+                        let h2 = await Promise.race([fetch('./Order.xlsx', { method: 'HEAD' }), new Promise((_, r) => setTimeout(r, 2000))]);
+                        if(h2 && h2.headers) ordMod = h2.headers.get('Last-Modified') || h2.headers.get('ETag') || '2';
+                    } catch (e) { console.warn("헤더 체크 스킵"); }
+
+                    let cachedOsaMod = await getDB(db, 'osa_mod');
+                    let cachedOrdMod = await getDB(db, 'ord_mod');
+
+                    if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
+                        updateLoadingStatus("저장된 엑셀 캐시를 불러옵니다. (초고속 로딩 ⚡)");
+                        excelData.STO_OSA = await getDB(db, 'STO_OSA');
+                        excelData.HFB = await getDB(db, 'HFB');
+                        excelData.PA = await getDB(db, 'PA'); 
+                        excelData.Article_level = await getDB(db, 'Article_level');
+                        excelData.AL010 = await getDB(db, 'AL010');
+                        excelData.Table7 = await getDB(db, 'Table7');
+                        excelData.SHP = await getDB(db, 'SHP');
+                        
+                        if (excelData.STO_OSA && excelData.AL010 && excelData.PA) {
+                            useCache = true;
+                        }
                     }
                 }
 
-                updateLoadingStatus("1/5: 새 엑셀 파일을 다운로드 중입니다...");
-                const [res1, res2] = await Promise.all([fetch('./FY26 OSA.xlsx'), fetch('./Order.xlsx')]);
-                const ab1 = await res1.arrayBuffer();
-                const ab2 = await res2.arrayBuffer();
+                // 캐시를 못쓰면 새로 파싱
+                if (!useCache) {
+                    updateLoadingStatus("1/5: 새 엑셀 파일을 다운로드 중입니다...");
+                    const [res1, res2] = await Promise.all([fetch('./FY26 OSA.xlsx'), fetch('./Order.xlsx')]);
+                    const ab1 = await res1.arrayBuffer();
+                    const ab2 = await res2.arrayBuffer();
 
-                updateLoadingStatus("2/5: 과거 실적(FY26 OSA) 데이터를 분석 중입니다...");
-                await new Promise(r => setTimeout(r, 50));
-                const wb1 = XLSX.read(ab1, { type: 'array' });
-                
-                excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
-                excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
-                excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']);
+                    updateLoadingStatus("2/5: 과거 실적(FY26 OSA) 데이터를 분석 중입니다...");
+                    await new Promise(r => setTimeout(r, 50));
+                    const wb1 = XLSX.read(ab1, { type: 'array' });
+                    
+                    excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
+                    excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
+                    excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']);
 
-                let paSheet = wb1.Sheets['PA'];
-                if(paSheet) {
-                    let rawPa = XLSX.utils.sheet_to_json(paSheet, { header: "A", raw: true, defval: "" });
-                    let mappedPa = [];
-                    rawPa.slice(1).forEach(row => {
-                        let yw = String(row['A'] || '').trim();
-                        let bu = String(row['B'] || '').trim();
-                        let paCode = normPA(row['D']);
-                        let osaVal = row['E'];
-                        if(yw && bu && paCode) {
-                            mappedPa.push({
-                                'YW - Year Week': yw,
-                                'BU - Business Unit': bu,
-                                'PA': paCode,
-                                'OSA': osaVal
-                            });
-                        }
-                    });
-                    excelData.PA = cleanData(mappedPa, ['OSA']);
-                } else {
-                    excelData.PA = [];
+                    let paSheet = wb1.Sheets['PA'];
+                    if(paSheet) {
+                        let rawPa = XLSX.utils.sheet_to_json(paSheet, { header: "A", raw: true, defval: "" });
+                        let mappedPa = [];
+                        rawPa.slice(1).forEach(row => {
+                            let yw = String(row['A'] || '').trim();
+                            let bu = String(row['B'] || '').trim();
+                            let paCode = normPA(row['D']);
+                            let osaVal = row['E'];
+                            if(yw && bu && paCode) {
+                                mappedPa.push({ 'YW - Year Week': yw, 'BU - Business Unit': bu, 'PA': paCode, 'OSA': osaVal });
+                            }
+                        });
+                        excelData.PA = cleanData(mappedPa, ['OSA']);
+                    } else {
+                        excelData.PA = [];
+                    }
+
+                    updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (약 5초 소요)");
+                    await new Promise(r => setTimeout(r, 50));
+                    const wb2 = XLSX.read(ab2, { type: 'array' });
+                    excelData.AL010 = getSheetData(wb2, 'AL010');
+                    excelData.Table7 = getSheetData(wb2, 'Table_7_Final');
+                    let shpSheetName = wb2.SheetNames[3];
+                    let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
+                    excelData.SHP = rawShpData.slice(1);
+
+                    if (db) {
+                        updateLoadingStatus("4/5: 데이터를 캐시에 저장 중입니다...");
+                        await putDB(db, 'osa_mod', osaMod);
+                        await putDB(db, 'ord_mod', ordMod);
+                        await putDB(db, 'STO_OSA', excelData.STO_OSA);
+                        await putDB(db, 'HFB', excelData.HFB);
+                        await putDB(db, 'PA', excelData.PA);
+                        await putDB(db, 'Article_level', excelData.Article_level);
+                        await putDB(db, 'AL010', excelData.AL010);
+                        await putDB(db, 'Table7', excelData.Table7);
+                        await putDB(db, 'SHP', excelData.SHP);
+                    }
                 }
-
-                updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (약 5초 소요)");
-                await new Promise(r => setTimeout(r, 50));
-                const wb2 = XLSX.read(ab2, { type: 'array' });
-                excelData.AL010 = getSheetData(wb2, 'AL010');
-                excelData.Table7 = getSheetData(wb2, 'Table_7_Final');
-                let shpSheetName = wb2.SheetNames[3];
-                let rawShpData = XLSX.utils.sheet_to_json(wb2.Sheets[shpSheetName], { header: "A", raw: true, defval: "" });
-                excelData.SHP = rawShpData.slice(1);
-
-                updateLoadingStatus("4/5: 데이터를 캐시에 저장 중입니다...");
-                await putDB(db, 'osa_mod', osaMod);
-                await putDB(db, 'ord_mod', ordMod);
-                await putDB(db, 'STO_OSA', excelData.STO_OSA);
-                await putDB(db, 'HFB', excelData.HFB);
-                await putDB(db, 'PA', excelData.PA);
-                await putDB(db, 'Article_level', excelData.Article_level);
-                await putDB(db, 'AL010', excelData.AL010);
-                await putDB(db, 'Table7', excelData.Table7);
-                await putDB(db, 'SHP', excelData.SHP);
 
                 updateLoadingStatus("5/5: 일일 하역 CAPA 시뮬레이터 및 미래 예측 중...");
                 await new Promise(r => setTimeout(r, 50));
@@ -472,7 +476,7 @@
 
             } catch (error) {
                 let msg = error.message || error.toString();
-                document.getElementById('loading').innerHTML = `<span style="color:red;font-size:16px;">❌ 오류: ${msg}</span>`;
+                document.getElementById('loading').innerHTML = `<span style="color:red;font-size:16px;">❌ 파일 파싱 오류 발생: ${msg}<br>엑셀 파일이 같은 폴더에 잘 있는지 확인해주세요.</span>`;
                 console.error(error);
             }
         }
@@ -506,7 +510,6 @@
             });
         }
 
-        // 🌟 다이나믹 CAPA 설정 반영 시뮬레이터
         function runContainerSimulation() {
             csmToSimulatedWeek = {};
             let containers = {};
@@ -843,6 +846,8 @@
 
         function updateView() {
             const level = document.getElementById('viewLevel').value;
+            if(level === 'settings') return;
+
             const store = document.getElementById('storeSelect').value;
             const storeCode = store.split(' - ')[0];
 
@@ -1094,3 +1099,74 @@
                 });
 
                 if (hasData) tableRows.push(rowData);
+            });
+
+            let traces = [];
+            if (searchInput && targetArticles.length === 1) {
+                let itemNo = targetArticles[0];
+                let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'].includes(storeCode) && normArt(d['Item Number']) === itemNo);
+                let osaMap = {};
+                actuals.forEach(d => { osaMap[String(d['YW - Year Week'])] = parseFloat(d['OSA']); });
+                if (projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) {
+                    Object.assign(osaMap, projectionData.article[storeCode][itemNo]);
+                }
+
+                let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
+                visWeeks.forEach(w => {
+                    let val = osaMap[w];
+                    if (val !== undefined && val !== null) {
+                        allY.push(val);
+                        if (w > lastActualWeek) {
+                            if (projX.length === 0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                            projX.push(w); projY.push(val);
+                        } else {
+                            actX.push(w); actY.push(val); lastX = w; lastY = val;
+                        }
+                    }
+                });
+                traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: { color: '#0058a3' } });
+                if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
+                
+                let minY = allY.length > 0 ? Math.min(...allY) : 0;
+                Plotly.newPlot('chartDiv', traces, { title: `Item: ${itemNo} - Weekly OSA`, xaxis: { type: 'category' }, yaxis: { tickformat: '.0%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 }, legend: { orientation: 'h', yanchor: 'top', y: -0.15 } });
+            } else {
+                let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
+                visWeeks.forEach(w => {
+                    if (groupCnt[w] > 0) {
+                        let avgVal = groupSum[w] / groupCnt[w];
+                        allY.push(avgVal);
+                        if (w > lastActualWeek) {
+                            if (projX.length === 0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                            projX.push(w); projY.push(avgVal);
+                        } else {
+                            actX.push(w); actY.push(avgVal); lastX = w; lastY = avgVal;
+                        }
+                    }
+                });
+                traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'Avg Group OSA', line: { color: '#0058a3' } });
+                if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'Avg OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
+                
+                let title = pa === 'ALL' ? `HFB ${hfb} Total Items Average` : `PA ${pa} Items Average`;
+                let minY = allY.length > 0 ? Math.min(...allY) : 0;
+                Plotly.newPlot('chartDiv', traces, { title: title, xaxis: { type: 'category' }, yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] }, margin: { t: 40, b: 120 }, legend: { orientation: 'h', yanchor: 'top', y: -0.15 } });
+            }
+
+            drawTable(['Article No.'].concat(visWeeks), tableRows, visWeeks.map(w => w > lastActualWeek));
+        }
+
+        function drawTable(headers, rows, isProjArray) {
+            if (headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
+            document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
+                let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
+                return `<th${isProj ? ' class="proj-col"' : ''}>${h}</th>`;
+            }).join('');
+            document.getElementById('tableBody').innerHTML = rows.map(r => `<tr>${r.map((c, i) => {
+                let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
+                return `<td${isProj ? ' class="proj-cell"' : ''}>${c}</td>`;
+            }).join('')}</tr>`).join('');
+        }
+
+        window.onload = loadExcelFiles;
+    </script>
+</body>
+</html>
