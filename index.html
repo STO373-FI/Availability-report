@@ -27,11 +27,12 @@
         .header-title { font-size: 28px; font-weight: bold; margin-bottom: 5px; color: #003399; }
         .header-desc { font-size: 14px; color: #666; margin-bottom: 20px; }
         .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
-        .table-container { overflow-x: auto; white-space: nowrap; }
+        .table-container { overflow-x: auto; white-space: nowrap; max-height: 500px; }
         table { border-collapse: collapse; margin-top: 10px; font-size: 13px; text-align: center; width: 100%; }
         th, td { padding: 10px 15px; border: 1px solid #ddd; }
-        th { background-color: #f8f9fa; color: #333; font-weight: bold; }
-        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; z-index: 1; }
+        th { background-color: #f8f9fa; color: #333; font-weight: bold; position: sticky; top: 0; z-index: 2; }
+        td:first-child, th:first-child { font-weight: bold; background-color: #eef2f5; text-align: left; position: sticky; left: 0; z-index: 3; }
+        th:first-child { z-index: 4; } /* 🌟 좌상단 헤더 고정 보강 */
         th.proj-col { background-color: #ffe8a1; color: #003399; }
         td.proj-cell { background-color: #fff8dc; font-style: italic; }
         #loading { font-size: 18px; font-weight: bold; color: #003399; display: flex; align-items: center; margin-bottom: 20px; }
@@ -47,7 +48,8 @@
             <select id="viewLevel" onchange="updateView()">
                 <option value="store">1. Store Overview</option>
                 <option value="hfb">2. HFB Level</option>
-                <option value="article">3. Article Level</option>
+                <option value="pa">3. PA Level</option>
+                <option value="article">4. Article Level</option>
             </select>
             <label>⏱️ Time Period</label>
             <div class="time-filter-container">
@@ -59,15 +61,20 @@
                 <label>2. Select Store</label>
                 <select id="storeSelect" onchange="updateView()"><option value="Loading...">Loading...</option></select>
             </div>
+            
             <div id="articleFilter" style="display:none;">
-                <label>3. Search Article</label>
+                <label>3. Filter Group (Optional)</label>
+                <select id="articleGroupSelect" onchange="updateView()">
+                    <option value="">-- All Products (Search Only) --</option>
+                </select>
+                <label>4. Search Single Article</label>
                 <input type="text" id="articleInput" placeholder="ex) 00546468" onkeypress="handleEnter(event)">
                 <button class="primary" onclick="updateView()">🔍 Search</button>
             </div>
             <button class="danger" onclick="forceRefreshCache()">🔄 데이터 강제 새로고침</button>
         </div>
         <div class="version-info">
-            <div class="version-text">ver 1.0.5</div>
+            <div class="version-text">ver 2.0.0</div>
             <div class="update-text">Last Updated: 2026.02.25</div>
         </div>
     </div>
@@ -96,8 +103,9 @@
     </div>
 
     <script>
-        let excelData = { AL010: [], Table7: [], SHP: [] };
-        let projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
+        // 🌟 excelData.PA 추가
+        let excelData = { STO_OSA: [], HFB: [], PA: [], Article_level: [], AL010: [], Table7: [], SHP: [] };
+        let projectionData = { store: {}, hfb: {}, pa: {}, article: {}, weeks: [] };
         let lastActualWeek = "";
         let csmToSimulatedWeek = {};
 
@@ -106,7 +114,7 @@
 
         function openDB() {
             return new Promise((resolve, reject) => {
-                let req = indexedDB.open(DB_NAME, 1);
+                let req = indexedDB.open(DB_NAME, 2); // DB 버전을 2로 올려 기존 캐시 덮어쓰기 유도
                 req.onupgradeneeded = e => e.target.result.createObjectStore(STORE_NAME);
                 req.onsuccess = e => resolve(e.target.result);
                 req.onerror = e => reject(e);
@@ -149,6 +157,16 @@
             if (val === undefined || val === null) return "";
             let str = String(val).trim();
             if (/^\d+$/.test(str)) return parseInt(str, 10).toString();
+            return str;
+        }
+
+        // 🌟 PA 코드를 4자리 문자로 고정하는 함수 (예: 111 -> "0111")
+        function normPA(val) {
+            if (val === undefined || val === null || val === "") return "";
+            let str = String(val).trim().split(' ')[0]; // 혹시 "0111 - Name" 형태면 앞쪽 숫자만 땀
+            if (/^\d+$/.test(str)) {
+                return str.padStart(4, '0');
+            }
             return str;
         }
 
@@ -221,15 +239,17 @@
                 let cachedOsaMod = await getDB(db, 'osa_mod');
                 let cachedOrdMod = await getDB(db, 'ord_mod');
 
+                // 🌟 PA 데이터 캐시까지 확인하도록 로직 추가
                 if (cachedOsaMod === osaMod && cachedOrdMod === ordMod) {
                     updateLoadingStatus("저장된 엑셀 캐시를 불러옵니다. (초고속 로딩 ⚡)");
                     excelData.STO_OSA = await getDB(db, 'STO_OSA');
                     excelData.HFB = await getDB(db, 'HFB');
+                    excelData.PA = await getDB(db, 'PA'); // 추가됨
                     excelData.Article_level = await getDB(db, 'Article_level');
                     excelData.AL010 = await getDB(db, 'AL010');
                     excelData.Table7 = await getDB(db, 'Table7');
                     excelData.SHP = await getDB(db, 'SHP');
-                    if (excelData.STO_OSA && excelData.AL010) {
+                    if (excelData.STO_OSA && excelData.AL010 && excelData.PA) {
                         runContainerSimulation();
                         calculateProjections();
                         initFilters();
@@ -249,7 +269,9 @@
                 const wb1 = XLSX.read(ab1, { type: 'array' });
                 excelData.STO_OSA = cleanData(getSheetData(wb1, 'STO_OSA'), ['OSA']);
                 excelData.HFB = cleanData(getSheetData(wb1, 'HFB'), ['OSA']);
-                excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA', 'ISA']);
+                // 🌟 PA 시트 로드
+                excelData.PA = cleanData(getSheetData(wb1, 'PA'), ['OSA']);
+                excelData.Article_level = cleanData(getSheetData(wb1, 'Article_level'), ['OSA']);
 
                 updateLoadingStatus("3/5: Order 물류 데이터를 분석 중입니다... (약 5초 소요)");
                 await new Promise(r => setTimeout(r, 50));
@@ -265,12 +287,13 @@
                 await putDB(db, 'ord_mod', ordMod);
                 await putDB(db, 'STO_OSA', excelData.STO_OSA);
                 await putDB(db, 'HFB', excelData.HFB);
+                await putDB(db, 'PA', excelData.PA); // 추가
                 await putDB(db, 'Article_level', excelData.Article_level);
                 await putDB(db, 'AL010', excelData.AL010);
                 await putDB(db, 'Table7', excelData.Table7);
                 await putDB(db, 'SHP', excelData.SHP);
 
-                updateLoadingStatus("5/5: 일일 하역 CAPA 시뮬레이터를 가동 중입니다...");
+                updateLoadingStatus("5/5: 일일 하역 CAPA 시뮬레이터 및 미래 예측 중...");
                 await new Promise(r => setTimeout(r, 50));
                 runContainerSimulation();
                 calculateProjections();
@@ -284,6 +307,7 @@
             }
         }
 
+        // 컨테이너 스케줄링 시뮬레이터 (그대로 유지)
         function runContainerSimulation() {
             csmToSimulatedWeek = {};
             let containers = {};
@@ -299,10 +323,10 @@
                 let type = String(row['A'] || '').trim().toUpperCase();
                 let cntrNo = String(row['D'] || '').trim();
                 let csmId = String(row['F'] || '').trim();
-                let actualArrDate = parseExcelDate(row['AJ']);   // 실제 포트 도착일
-                let plannedArrDate = parseExcelDate(row['S']);    // 예상 포트 도착일
-                let customsClearDate = parseExcelDate(row['AN']); // 통관 완료일
-                let storeRecvDate = parseExcelDate(row['AT']);    // 매장 입고 확정일
+                let actualArrDate = parseExcelDate(row['AJ']);
+                let plannedArrDate = parseExcelDate(row['S']);
+                let customsClearDate = parseExcelDate(row['AN']);
+                let storeRecvDate = parseExcelDate(row['AT']);
 
                 if (!cntrNo || !csmId) return;
 
@@ -311,7 +335,6 @@
                         type: type,
                         csmList: [],
                         fixedDate: null,
-                        // ✅ [v1.0.5] 포트 도착일 기준: 실제 도착 > 예상 도착 순으로 사용
                         portArrivalDate: actualArrDate || plannedArrDate || null,
                         customsClearDate: customsClearDate || null
                     };
@@ -322,7 +345,6 @@
                 if (storeRecvDate) {
                     containers[cntrNo].fixedDate = storeRecvDate;
                 }
-                // 통관 완료일이 있으면 업데이트 (가장 최근값 유지)
                 if (customsClearDate && !containers[cntrNo].customsClearDate) {
                     containers[cntrNo].customsClearDate = customsClearDate;
                 }
@@ -332,7 +354,6 @@
             for (let cntr in containers) {
                 let c = containers[cntr];
                 if (c.fixedDate && c.fixedDate >= simDate) {
-                    // AT 확정일이 있는 컨테이너 → 해당 날짜에 고정
                     let dStr = c.fixedDate.toISOString().split('T')[0];
                     if (!fixedByDate[dStr]) fixedByDate[dStr] = { LF: 0, DD: 0, HF: 0 };
                     if (c.type === 'LF') fixedByDate[dStr].LF++;
@@ -341,14 +362,10 @@
                     let fw = getYearWeek(c.fixedDate);
                     c.csmList.forEach(csm => csmToSimulatedWeek[csm] = fw);
                 } else if (c.portArrivalDate) {
-                    // ✅ [v1.0.5] 포트 도착일이 있는 컨테이너만 대기열에 추가
-                    // (포트에 도착해야 스케줄링 가능)
                     queuedContainers.push(c);
                 }
-                // portArrivalDate 도 없는 컨테이너는 스케줄링에서 제외
             }
 
-            // 포트 도착일 기준 정렬 (일찍 도착한 것부터 처리)
             queuedContainers.sort((a, b) => a.portArrivalDate - b.portArrivalDate);
             let qIndex = 0;
 
@@ -357,13 +374,11 @@
                 let daily = fixedByDate[dStr] || { LF: 0, DD: 0, HF: 0 };
                 let totalDaily = daily.LF + daily.HF + daily.DD;
 
-                // ✅ [v1.0.5] 핵심 수정: simDate 기준으로 포트에 이미 도착한 컨테이너만 집계
                 let pendingLF = 0, pendingHF = 0, pendingDD = 0;
                 for (let i = qIndex; i < queuedContainers.length; i++) {
                     let c = queuedContainers[i];
                     if (c.scheduled) continue;
-                    // 포트 도착일이 simDate 이하인 것만 처리 대상
-                    if (c.portArrivalDate > simDate) break; // 정렬되어 있으므로 이후도 미도착
+                    if (c.portArrivalDate > simDate) break;
                     let t = c.type;
                     if (t === 'LF') pendingLF++;
                     else if (t === 'HF') pendingHF++;
@@ -371,7 +386,6 @@
                 }
 
                 if (pendingLF + pendingHF + pendingDD > 0) {
-                    // 슬롯 계산: 빈 슬롯은 다음 우선순위로 위임
                     let slotLF = Math.max(0, 1 - daily.LF);
                     let slotHF = Math.max(0, 1 - daily.HF);
                     let slotDD = Math.max(0, 3 - daily.DD);
@@ -392,7 +406,6 @@
                     for (let i = qIndex; i < queuedContainers.length && totalDaily < 5; i++) {
                         let c = queuedContainers[i];
                         if (c.scheduled) continue;
-                        // ✅ [v1.0.5] 포트에 도착한 컨테이너만 스케줄링
                         if (c.portArrivalDate > simDate) break;
 
                         if (c.type === 'LF' && remLF > 0) {
@@ -403,40 +416,32 @@
                             c.scheduled = true; remDD--; totalDaily++; scheduledToday.push(c);
                         }
                     }
-
                     let currentSimWeek = getYearWeek(simDate);
                     scheduledToday.forEach(c => c.csmList.forEach(csm => csmToSimulatedWeek[csm] = currentSimWeek));
                 }
-
                 simDate.setDate(simDate.getDate() + 1);
                 while (qIndex < queuedContainers.length && queuedContainers[qIndex].scheduled) qIndex++;
             }
         }
 
         function calculateProjections() {
-            projectionData = { store: {}, hfb: {}, article: {}, weeks: [] };
+            // 🌟 pa 예측 저장 공간 추가
+            projectionData = { store: {}, hfb: {}, pa: {}, article: {}, weeks: [] };
 
             let allWeeks = [...new Set(excelData.STO_OSA.map(d => String(d['YW - Year Week'])).filter(w => w && w !== "undefined"))].sort();
             lastActualWeek = allWeeks[allWeeks.length - 1];
 
-            // 직전 주 제품별 실제 OSA 매핑 (WK09 과거 날짜 추정 대신 실적 사용)
             let prevWeekArticleOSA = {};
+            let activeStoreArticles = {};
             excelData.Article_level.forEach(d => {
                 if (String(d['YW - Year Week']) === lastActualWeek) {
                     let storeId = String(d['BU - Business Unit']).split(' - ')[0];
                     let itemNo = normArt(d['Item Number']);
                     let osaVal = parseFloat(d['OSA']) || 0;
+                    
                     if (!prevWeekArticleOSA[storeId]) prevWeekArticleOSA[storeId] = {};
                     prevWeekArticleOSA[storeId][itemNo] = osaVal;
-                }
-            });
-
-            let activeStoreArticles = {};
-            excelData.Article_level.forEach(d => {
-                let wk = String(d['YW - Year Week']);
-                if (wk === lastActualWeek) {
-                    let storeId = String(d['BU - Business Unit']).split(' - ')[0];
-                    let itemNo = normArt(d['Item Number']);
+                    
                     if (!activeStoreArticles[storeId]) activeStoreArticles[storeId] = new Set();
                     activeStoreArticles[storeId].add(itemNo);
                 }
@@ -487,6 +492,8 @@
                 if (!activeStoreArticles[storeId] || !activeStoreArticles[storeId].has(itemNo)) return;
 
                 let hfb = String(row['HFB']);
+                let paCode = normPA(row['PA']); // 🌟 PA 4자리 정규화
+                
                 let avgSales = parseFloat(row['AVGSALES']) || 0;
                 let currentStock = parseFloat(row['AVAILABLESTOCK']) || 0;
                 let originalStock = currentStock;
@@ -494,6 +501,8 @@
                 if (!projectionData.article[storeId]) projectionData.article[storeId] = {};
                 if (!projectionData.hfb[storeId]) projectionData.hfb[storeId] = {};
                 if (!projectionData.hfb[storeId][hfb]) projectionData.hfb[storeId][hfb] = {};
+                if (!projectionData.pa[storeId]) projectionData.pa[storeId] = {};
+                if (!projectionData.pa[storeId][paCode]) projectionData.pa[storeId][paCode] = {};
                 if (!projectionData.store[storeId]) projectionData.store[storeId] = {};
 
                 let projOsaMap = {};
@@ -507,7 +516,6 @@
 
                     if (index === 0) {
                         salesToDeduct = avgSales * (remainDays / 7);
-
                         let remainOsa = 0;
                         if (salesToDeduct <= 0) {
                             remainOsa = currentStock > 0 ? 1 : 0;
@@ -517,7 +525,6 @@
                             remainOsa = currentStock / salesToDeduct;
                         }
 
-                        // pastOsa: 직전 주 실제 실적 사용, 없으면 재고 기반 비례 추정
                         let pastOsa;
                         if (prevWeekArticleOSA[storeId] && prevWeekArticleOSA[storeId][itemNo] !== undefined) {
                             pastOsa = prevWeekArticleOSA[storeId][itemNo];
@@ -529,9 +536,7 @@
                                 pastOsa = Math.min(1, Math.max(0, originalStock / pastSalesEstimate));
                             }
                         }
-
                         osa = ((elapsedDays * pastOsa) + (remainDays * remainOsa)) / 7;
-
                     } else {
                         if (avgSales <= 0) {
                             osa = currentStock > 0 ? 1 : 0;
@@ -550,6 +555,11 @@
                     if (!projectionData.hfb[storeId][hfb][wk]) projectionData.hfb[storeId][hfb][wk] = { sum: 0, cnt: 0 };
                     projectionData.hfb[storeId][hfb][wk].sum += projOsaMap[wk];
                     projectionData.hfb[storeId][hfb][wk].cnt++;
+
+                    // 🌟 PA 집계 추가
+                    if (!projectionData.pa[storeId][paCode][wk]) projectionData.pa[storeId][paCode][wk] = { sum: 0, cnt: 0 };
+                    projectionData.pa[storeId][paCode][wk].sum += projOsaMap[wk];
+                    projectionData.pa[storeId][paCode][wk].cnt++;
 
                     if (!projectionData.store[storeId][wk]) projectionData.store[storeId][wk] = { sum: 0, cnt: 0 };
                     projectionData.store[storeId][wk].sum += projOsaMap[wk];
@@ -574,10 +584,35 @@
                 fromSelect.value = totalWeeks.includes(currFrom) ? currFrom : allWeeks[0];
                 toSelect.value = totalWeeks.includes(currTo) ? currTo : totalWeeks[totalWeeks.length - 1];
             }
+            
             const stores = [...new Set(excelData.STO_OSA.map(d => d['BU - Business Unit']))].sort();
             const storeSelect = document.getElementById('storeSelect');
             storeSelect.innerHTML = stores.map(s => '<option value="' + s + '" ' + (s.includes('373') ? 'selected' : '') + '>' + s + '</option>').join('');
+            
             updateView();
+        }
+
+        function populateArticleGroups(storeCode) {
+            let select = document.getElementById('articleGroupSelect');
+            let html = '<option value="">-- All (Search Only) --</option>';
+            
+            let hfbs = [...new Set(excelData.HFB.filter(d => d['BU - Business Unit'].includes(storeCode)).map(d => d['HFB Name - Home Furnishing Business Name']))].sort();
+            if(hfbs.length > 0) {
+                html += '<optgroup label="--- HFB ---">';
+                hfbs.forEach(h => html += `<option value="HFB_${h}">${h}</option>`);
+                html += '</optgroup>';
+            }
+
+            let pas = [...new Set(excelData.PA.filter(d => d['BU - Business Unit'].includes(storeCode)).map(d => normPA(d['PA'])))].sort();
+            if(pas.length > 0) {
+                html += '<optgroup label="--- PA ---">';
+                pas.forEach(p => html += `<option value="PA_${p}">PA ${p}</option>`);
+                html += '</optgroup>';
+            }
+            
+            let currentVal = select.value;
+            select.innerHTML = html;
+            if(html.includes(`value="${currentVal}"`)) select.value = currentVal;
         }
 
         function handleEnter(e) { if (e.key === 'Enter') updateView(); }
@@ -585,19 +620,27 @@
         function updateView() {
             const level = document.getElementById('viewLevel').value;
             const store = document.getElementById('storeSelect').value;
-            document.getElementById('storeFilter').style.display = (level === 'hfb' || level === 'article') ? 'block' : 'none';
+            const storeCode = store.split(' - ')[0];
+
+            document.getElementById('storeFilter').style.display = (level === 'hfb' || level === 'pa' || level === 'article') ? 'block' : 'none';
             document.getElementById('articleFilter').style.display = (level === 'article') ? 'block' : 'none';
+
             if (level === 'store') {
                 document.getElementById('mainTitle').innerText = '1. Store Overview (Benchmarking)';
                 document.getElementById('subTitle').innerText = '모든 스토어의 데이터입니다. 하단 범례를 클릭하여 원하는 스토어만 비교해보세요.';
                 renderStoreData();
             } else if (level === 'hfb') {
-                document.getElementById('mainTitle').innerText = '2. HFB Level (' + store + ')';
-                document.getElementById('subTitle').innerText = '해당 스토어의 모든 HFB 데이터입니다. 하단 범례를 클릭하여 원하는 HFB만 비교해보세요.';
+                document.getElementById('mainTitle').innerText = '2. HFB Level (' + storeCode + ')';
+                document.getElementById('subTitle').innerText = '해당 스토어의 모든 HFB 데이터입니다. 하단 범례를 클릭하여 비교해보세요.';
                 renderHFBData(store);
+            } else if (level === 'pa') {
+                document.getElementById('mainTitle').innerText = '3. PA Level (' + storeCode + ')';
+                document.getElementById('subTitle').innerText = '해당 스토어의 모든 PA(Product Area) 데이터입니다.';
+                renderPAData(store);
             } else if (level === 'article') {
-                document.getElementById('mainTitle').innerText = '3. Article Level (' + store + ')';
-                document.getElementById('subTitle').innerText = '좌측에서 제품 번호를 검색하세요. (예: 00546468)';
+                document.getElementById('mainTitle').innerText = '4. Article Level (' + storeCode + ')';
+                document.getElementById('subTitle').innerText = '제품 번호를 검색하거나, 특정 HFB/PA 그룹을 선택하여 전체 리스트를 확인하세요.';
+                populateArticleGroups(storeCode);
                 renderArticleData(store);
             }
         }
@@ -714,7 +757,7 @@
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
             Plotly.newPlot('chartDiv', traces, {
-                title: 'All HFBs in ' + store,
+                title: 'All HFBs in ' + storeCode,
                 xaxis: { type: 'category' },
                 yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] },
                 margin: { t: 40, b: 120 },
@@ -723,69 +766,214 @@
             drawTable(['HFB Name'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
-        function renderArticleData(store) {
-            const rawItemNo = document.getElementById('articleInput').value.trim();
-            const itemNo = normArt(rawItemNo);
-            if (!itemNo) { Plotly.newPlot('chartDiv', []); drawTable([], []); return; }
+        // 🌟 새로 추가된 PA 렌더링 함수
+        function renderPAData(store) {
             let storeCode = store.split(' - ')[0];
-            let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
-            let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
-                if (projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) return projectionData.article[storeCode][itemNo];
-                return null;
-            });
-            if (weeks.length === 0) { alert('해당 기간에 "' + rawItemNo + '" 제품의 데이터/예측 결과가 없습니다.'); return; }
-            let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
+            let actData = excelData.PA.filter(d => d['BU - Business Unit'] === store);
+            let pas = [...new Set(actData.map(d => normPA(d['PA'])))].sort();
+            
+            let traces = [], tableRows = [], tableWeeks = [], isProjFlags = {};
             let allY = [];
-            weeks.forEach((w, i) => {
-                allY.push(osas[i]);
-                if (isProjMap[w]) {
-                    if (projX.length === 0 && lastX) { projX.push(lastX); projY.push(lastY); }
-                    projX.push(w); projY.push(osas[i]);
-                } else {
-                    actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
+            
+            pas.forEach(pa => {
+                // 원본 엑셀의 D열(PA)이 "0111 - xxx" 이거나 "111" 이거나 섞여있을 수 있으므로 normPA로 필터링
+                let paActuals = actData.filter(d => normPA(d['PA']) === pa);
+                
+                let { weeks, osas, isProjMap } = getCombinedData(paActuals, storeCode, () => {
+                    if (projectionData.pa[storeCode] && projectionData.pa[storeCode][pa]) {
+                        let res = {};
+                        for (let w in projectionData.pa[storeCode][pa]) {
+                            let cnt = projectionData.pa[storeCode][pa][w].cnt;
+                            res[w] = cnt > 0 ? projectionData.pa[storeCode][pa][w].sum / cnt : 0;
+                        }
+                        return res;
+                    }
+                    return null;
+                });
+
+                if (weeks.length > 0) {
+                    if (tableWeeks.length === 0) { tableWeeks = weeks; isProjFlags = isProjMap; }
+                    let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
+                    weeks.forEach((w, i) => {
+                        allY.push(osas[i]);
+                        if (isProjMap[w]) {
+                            if (projX.length === 0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                            projX.push(w); projY.push(osas[i]);
+                        } else {
+                            actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
+                        }
+                    });
+                    
+                    traces.push({ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: pa, legendgroup: pa });
+                    if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', line: { dash: 'dot' }, name: pa, showlegend: false, legendgroup: pa });
+                    tableRows.push([pa].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
                 }
             });
-            let traces = [{ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: { color: '#0058a3' } }];
-            if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
-            let isaX = [], isaY = [];
-            actuals.forEach(d => {
-                let wk = String(d['YW - Year Week']);
-                if (!isProjMap[wk] && weeks.includes(wk)) {
-                    let isaVal = parseFloat(d['ISA']);
-                    isaX.push(wk); isaY.push(isaVal); allY.push(isaVal);
-                }
-            });
-            traces.push({ x: isaX, y: isaY, type: 'scatter', mode: 'lines+markers', name: 'ISA', line: { color: '#ff9900' } });
+
             let validY = allY.filter(v => !isNaN(v) && v !== null);
             let minY = validY.length > 0 ? Math.min(...validY) : 0;
             Plotly.newPlot('chartDiv', traces, {
-                title: 'Item: ' + itemNo + ' - OSA vs Projection',
+                title: 'All PAs in ' + storeCode,
                 xaxis: { type: 'category' },
-                yaxis: { tickformat: '.0%', range: [Math.max(0, minY - 0.05), 1.05] },
+                yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] },
                 margin: { t: 40, b: 120 },
                 legend: { orientation: 'h', yanchor: 'top', y: -0.15 }
             });
-            let isaRowData = actuals.filter(d => !isProjMap[String(d['YW - Year Week'])])
-                .map(d => [String(d['YW - Year Week']), ((parseFloat(d['ISA']) || 0) * 100).toFixed(1) + '%']);
-            drawTable(['Week', 'ISA'], isaRowData, weeks.map(w => isProjMap[w]));
+            drawTable(['PA Number'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
         }
 
-        function drawTable(headers, rows, isProjFlags) {
-            let headerHtml = headers.map((h, i) => {
-                let isProj = isProjFlags && isProjFlags[i];
+        // 🌟 완전히 진화한 Article Level 렌더링 (단일 검색 + HFB/PA 그룹 테이블 스크롤 대응)
+        function renderArticleData(store) {
+            let storeCode = store.split(' - ')[0];
+            const rawItemNo = document.getElementById('articleInput').value.trim();
+            const filterGroup = document.getElementById('articleGroupSelect').value;
+            
+            if (!rawItemNo && !filterGroup) { 
+                Plotly.newPlot('chartDiv', []); drawTable([], []); return; 
+            }
+
+            // --- 1. 단일 제품 검색 모드 ---
+            if (rawItemNo) {
+                const itemNo = normArt(rawItemNo);
+                let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
+                
+                let { weeks, osas, isProjMap } = getCombinedData(actuals, storeCode, () => {
+                    if (projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) return projectionData.article[storeCode][itemNo];
+                    return null;
+                });
+
+                if (weeks.length === 0) { alert('해당 기간에 "' + rawItemNo + '" 제품의 데이터가 없습니다.'); return; }
+
+                let actX = [], actY = [], projX = [], projY = [], lastX = null, lastY = null;
+                let allY = [];
+                weeks.forEach((w, i) => {
+                    allY.push(osas[i]);
+                    if (isProjMap[w]) {
+                        if (projX.length === 0 && lastX) { projX.push(lastX); projY.push(lastY); }
+                        projX.push(w); projY.push(osas[i]);
+                    } else {
+                        actX.push(w); actY.push(osas[i]); lastX = w; lastY = osas[i];
+                    }
+                });
+
+                let traces = [{ x: actX, y: actY, type: 'scatter', mode: 'lines+markers', name: 'OSA', line: { color: '#0058a3' } }];
+                if (projX.length > 0) traces.push({ x: projX, y: projY, type: 'scatter', mode: 'lines+markers', name: 'OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
+
+                let validY = allY.filter(v => !isNaN(v) && v !== null);
+                let minY = validY.length > 0 ? Math.min(...validY) : 0;
+                Plotly.newPlot('chartDiv', traces, {
+                    title: 'Item: ' + itemNo + ' - Weekly OSA',
+                    xaxis: { type: 'category' },
+                    yaxis: { tickformat: '.0%', range: [Math.max(0, minY - 0.05), 1.05] },
+                    margin: { t: 40, b: 120 },
+                    legend: { orientation: 'h', yanchor: 'top', y: -0.15 }
+                });
+                
+                let osaRow = ['OSA %'].concat(osas.map(v => (v * 100).toFixed(1) + '%'));
+                drawTable(['Metric'].concat(weeks), [osaRow], weeks.map(w => isProjMap[w]));
+            } 
+            // --- 2. HFB / PA 그룹 다중 제품 리스트 모드 ---
+            else if (filterGroup) {
+                let isHFB = filterGroup.startsWith('HFB_');
+                let targetValue = filterGroup.substring(4); // 예: "HFB_11 - Living room" -> "11 - Living room"
+                let targetNum = isHFB ? parseInt(targetValue.split(' - ')[0]).toString() : targetValue; 
+                
+                // 해당 그룹에 속하는 모든 활성 아이템 추출 (AL010 기준)
+                let matchedItems = new Set();
+                excelData.AL010.forEach(row => {
+                    if (String(row['MHS_ID']) !== storeCode) return;
+                    let slValue = parseInt(row['SL']);
+                    if (isNaN(slValue) || slValue < 1 || slValue > 4) return;
+                    
+                    if (isHFB && String(row['HFB']) === targetNum) {
+                        matchedItems.add(normArt(row['ARTNO']));
+                    } else if (!isHFB && normPA(row['PA']) === targetNum) {
+                        matchedItems.add(normArt(row['ARTNO']));
+                    }
+                });
+
+                if(matchedItems.size === 0) {
+                    alert("선택한 그룹에 활성 제품이 없습니다."); return;
+                }
+
+                // 평균(Average) 그래프용 데이터 계산 및 테이블 행(Row) 생성
+                let tableRows = [];
+                let tableWeeks = [];
+                let isProjFlags = {};
+                let groupSum = {}, groupCnt = {};
+                
+                // 가로 정렬(기간 필터)를 위한 기준 주차 뽑기
+                let dummyActuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && matchedItems.has(normArt(d['Item Number'])));
+                let { weeks: baseWeeks, isProjMap: baseProjMap } = getCombinedData(dummyActuals, storeCode, () => projectionData.article[storeCode] ? projectionData.article[storeCode][Array.from(matchedItems)[0]] : null);
+                
+                if(baseWeeks.length === 0) return;
+                tableWeeks = baseWeeks;
+                isProjFlags = baseProjMap;
+                baseWeeks.forEach(w => { groupSum[w] = 0; groupCnt[w] = 0; });
+
+                matchedItems.forEach(itemNo => {
+                    let actuals = excelData.Article_level.filter(d => d['BU - Business Unit'] === store && normArt(d['Item Number']) === itemNo);
+                    let { weeks, osas } = getCombinedData(actuals, storeCode, () => {
+                        return (projectionData.article[storeCode] && projectionData.article[storeCode][itemNo]) ? projectionData.article[storeCode][itemNo] : null;
+                    });
+                    
+                    if(weeks.length > 0) {
+                        // 평균 집계
+                        weeks.forEach((w, i) => {
+                            if(groupSum[w] !== undefined && !isNaN(osas[i])) {
+                                groupSum[w] += osas[i];
+                                groupCnt[w]++;
+                            }
+                        });
+                        // 테이블 행 추가
+                        tableRows.push([itemNo].concat(osas.map(v => (v * 100).toFixed(1) + '%')));
+                    }
+                });
+
+                // 그래프 (평균선 1개만)
+                let avgActX=[], avgActY=[], avgProjX=[], avgProjY=[], lastX=null, lastY=null;
+                let allY = [];
+                tableWeeks.forEach(w => {
+                    let avgOsa = groupCnt[w] > 0 ? groupSum[w] / groupCnt[w] : 0;
+                    allY.push(avgOsa);
+                    if (isProjFlags[w]) {
+                        if (avgProjX.length === 0 && lastX) { avgProjX.push(lastX); avgProjY.push(lastY); }
+                        avgProjX.push(w); avgProjY.push(avgOsa);
+                    } else {
+                        avgActX.push(w); avgActY.push(avgOsa); lastX = w; lastY = avgOsa;
+                    }
+                });
+
+                let traces = [{ x: avgActX, y: avgActY, type: 'scatter', mode: 'lines+markers', name: 'Avg OSA', line: { color: '#0058a3' } }];
+                if (avgProjX.length > 0) traces.push({ x: avgProjX, y: avgProjY, type: 'scatter', mode: 'lines+markers', name: 'Avg OSA (Proj)', line: { color: '#0058a3', dash: 'dot' } });
+
+                let minY = allY.length > 0 ? Math.min(...allY) : 0;
+                Plotly.newPlot('chartDiv', traces, {
+                    title: `${isHFB ? 'HFB' : 'PA'} ${targetValue} - Group Average OSA`,
+                    xaxis: { type: 'category' },
+                    yaxis: { tickformat: '.1%', range: [Math.max(0, minY - 0.05), 1.05] },
+                    margin: { t: 40, b: 120 },
+                    legend: { orientation: 'h', yanchor: 'top', y: -0.15 }
+                });
+
+                // 테이블에 전체 제품 리스트 렌더링
+                drawTable(['Article No.'].concat(tableWeeks), tableRows, tableWeeks.map(w => isProjFlags[w]));
+            }
+        }
+
+        function drawTable(headers, rows, isProjArray) {
+            if (headers.length === 0) { document.getElementById('tableHead').innerHTML = ""; document.getElementById('tableBody').innerHTML = ""; return; }
+            document.getElementById('tableHead').innerHTML = headers.map((h, i) => {
+                let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
                 return '<th' + (isProj ? ' class="proj-col"' : '') + '>' + h + '</th>';
             }).join('');
-            document.getElementById('tableHead').innerHTML = '<tr>' + headerHtml + '</tr>';
-            let bodyHtml = rows.map(row => {
-                return '<tr>' + row.map((cell, i) => {
-                    let isProj = isProjFlags && isProjFlags[i];
-                    return '<td' + (isProj ? ' class="proj-cell"' : '') + '>' + cell + '</td>';
-                }).join('') + '</tr>';
-            }).join('');
-            document.getElementById('tableBody').innerHTML = bodyHtml;
+            document.getElementById('tableBody').innerHTML = rows.map(r => '<tr>' + r.map((c, i) => {
+                let isProj = (i > 0 && isProjArray && isProjArray[i-1]) ? true : false;
+                return '<td' + (isProj ? ' class="proj-cell"' : '') + '>' + c + '</td>';
+            }).join('') + '</tr>').join('');
         }
 
-        loadExcelFiles();
+        window.onload = loadExcelFiles;
     </script>
 </body>
 </html>
